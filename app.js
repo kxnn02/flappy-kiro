@@ -284,3 +284,26 @@ function render() {
     gameoverOverlay.style.display = 'flex';
   }
 }
+
+// === Game Loop ===
+
+let previousTimestamp = null;
+
+/**
+ * Main game loop driven by requestAnimationFrame.
+ * Computes delta time in seconds, clamped to 0.1s max.
+ * Calls update(dt) then render() each frame regardless of game state.
+ * @param {number} timestamp - High-resolution timestamp from requestAnimationFrame
+ */
+function gameLoop(timestamp) {
+  let dt = previousTimestamp ? (timestamp - previousTimestamp) / 1000 : 0;
+  dt = Math.min(dt, 0.1);
+  previousTimestamp = timestamp;
+
+  update(dt);
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// Start the game loop
+requestAnimationFrame(gameLoop);
