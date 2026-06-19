@@ -1,0 +1,45 @@
+/* === Reset & Dark Theme Background === */
+body {
+  margin: 0;
+  padding: 0;
+  background: #1a1a2e;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+/* === Canvas Centering via Wrapper === */
+#game-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+#game-canvas {
+  display: block;
+}
+
+/* === Overlay Positioning & Styling === */
+#start-overlay,
+#score-overlay,
+#gameover-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+  color: #e0e0e0;
+}
+
+/* === Score Overlay — top-aligned === */
+#score-overlay {
+  justify-content: flex-start;
+  padding-top: 16px;
+}
