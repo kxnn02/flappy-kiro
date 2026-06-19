@@ -222,3 +222,21 @@ document.addEventListener('keydown', function (e) {
 canvas.addEventListener('click', function () {
   handleInput();
 });
+
+// === Update Function ===
+
+/**
+ * Updates all game state for the current frame.
+ * Applies gravity, clamps to terminal velocity, updates position.
+ * Only mutates state when in PLAYING state. No draw calls.
+ * @param {number} dt - Delta time in seconds
+ */
+function update(dt) {
+  if (currentState !== GAME_STATES.PLAYING) {
+    return;
+  }
+
+  ghosty.velocity += GRAVITY * dt;
+  ghosty.velocity = Math.min(ghosty.velocity, TERMINAL_VELOCITY);
+  ghosty.y += ghosty.velocity * dt;
+}
