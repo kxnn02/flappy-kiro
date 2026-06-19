@@ -240,3 +240,47 @@ function update(dt) {
   ghosty.velocity = Math.min(ghosty.velocity, TERMINAL_VELOCITY);
   ghosty.y += ghosty.velocity * dt;
 }
+
+// === Demo Entities for Render ===
+const demoPipe = { x: 280, gapY: 300, gapHeight: 150, width: 52 };
+const demoPacket = { x: 306, y: 300, radius: 10 };
+
+// === Main Render Function ===
+
+/**
+ * Renders the current frame. Clears canvas, fills background,
+ * draws demo entities, and toggles overlay visibility per game state.
+ * Does NOT mutate any game state.
+ */
+function render() {
+  // 1. Clear the entire canvas
+  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // 2. Fill background with dark theme color
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // 3. Render entities (Ghosty always visible, demo pipe and packet)
+  renderGhosty(ctx, ghosty);
+  renderPipePair(ctx, demoPipe);
+  renderDataPacket(ctx, demoPacket);
+
+  // 4. Toggle overlay visibility based on current game state
+  const startOverlay = document.getElementById('start-overlay');
+  const scoreOverlay = document.getElementById('score-overlay');
+  const gameoverOverlay = document.getElementById('gameover-overlay');
+
+  if (currentState === GAME_STATES.START_SCREEN) {
+    startOverlay.style.display = 'flex';
+    scoreOverlay.style.display = 'none';
+    gameoverOverlay.style.display = 'none';
+  } else if (currentState === GAME_STATES.PLAYING) {
+    startOverlay.style.display = 'none';
+    scoreOverlay.style.display = 'flex';
+    gameoverOverlay.style.display = 'none';
+  } else if (currentState === GAME_STATES.GAME_OVER) {
+    startOverlay.style.display = 'none';
+    scoreOverlay.style.display = 'none';
+    gameoverOverlay.style.display = 'flex';
+  }
+}
