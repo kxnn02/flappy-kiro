@@ -59,19 +59,30 @@ function rectsOverlap(a, b) {
   );
 }
 
+// === Asset Loading with Fallback ===
+let ghostySprite = new Image();
+let ghostySpriteReady = false;
+ghostySprite.onload = function () { ghostySpriteReady = true; };
+ghostySprite.onerror = function () { ghostySpriteReady = false; };
+ghostySprite.src = 'assets/ghosty.png';
+
 // === Entity Rendering (pure) ===
 
 /**
- * Renders Ghosty as a purple rounded rectangle.
+ * Renders Ghosty using sprite if loaded, otherwise a purple rounded rectangle.
  * Pure function — draws to ctx without mutating the ghosty state object.
  * @param {CanvasRenderingContext2D} ctx - The 2D rendering context
  * @param {{ x: number, y: number, width: number, height: number }} ghosty - Position and dimensions
  */
 function renderGhosty(ctx, ghosty) {
-  ctx.fillStyle = '#9d00ff';
-  ctx.beginPath();
-  ctx.roundRect(ghosty.x, ghosty.y, ghosty.width, ghosty.height, 8);
-  ctx.fill();
+  if (ghostySpriteReady) {
+    ctx.drawImage(ghostySprite, ghosty.x, ghosty.y, ghosty.width, ghosty.height);
+  } else {
+    ctx.fillStyle = '#9d00ff';
+    ctx.beginPath();
+    ctx.roundRect(ghosty.x, ghosty.y, ghosty.width, ghosty.height, 8);
+    ctx.fill();
+  }
 }
 
 /**
@@ -245,6 +256,11 @@ function update(dt) {
 const demoPipe = { x: 280, gapY: 300, gapHeight: 150, width: 52 };
 const demoPacket = { x: 306, y: 300, radius: 10 };
 
+// === Cached DOM References ===
+const startOverlay = document.getElementById('start-overlay');
+const scoreOverlay = document.getElementById('score-overlay');
+const gameoverOverlay = document.getElementById('gameover-overlay');
+
 // === Main Render Function ===
 
 /**
@@ -266,10 +282,6 @@ function render() {
   renderDataPacket(ctx, demoPacket);
 
   // 4. Toggle overlay visibility based on current game state
-  const startOverlay = document.getElementById('start-overlay');
-  const scoreOverlay = document.getElementById('score-overlay');
-  const gameoverOverlay = document.getElementById('gameover-overlay');
-
   if (currentState === GAME_STATES.START_SCREEN) {
     startOverlay.style.display = 'flex';
     scoreOverlay.style.display = 'none';
