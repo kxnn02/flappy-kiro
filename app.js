@@ -187,3 +187,38 @@ function playPowerUpSound() {
     // Silently handle — audio is non-critical
   }
 }
+
+// === Player Entity State ===
+let ghosty = { x: 80, y: 250, width: 34, height: 34, velocity: 0 };
+
+// === Input Handlers ===
+
+/**
+ * Unified input handler called by both keyboard and mouse listeners.
+ * Dispatches action based on the current game state:
+ * - START_SCREEN: transitions to PLAYING
+ * - PLAYING: applies FLAP_IMPULSE to ghosty's velocity
+ * - GAME_OVER: transitions to START_SCREEN
+ */
+function handleInput() {
+  if (currentState === GAME_STATES.START_SCREEN) {
+    currentState = transitionState(currentState, EVENTS.USER_INPUT);
+  } else if (currentState === GAME_STATES.PLAYING) {
+    ghosty.velocity = FLAP_IMPULSE;
+  } else if (currentState === GAME_STATES.GAME_OVER) {
+    currentState = transitionState(currentState, EVENTS.USER_INPUT);
+  }
+}
+
+// Keyboard listener: detect Spacebar, prevent default scroll
+document.addEventListener('keydown', function (e) {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    handleInput();
+  }
+});
+
+// Mouse/touch listener: click on canvas triggers input
+canvas.addEventListener('click', function () {
+  handleInput();
+});
