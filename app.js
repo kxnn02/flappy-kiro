@@ -58,3 +58,132 @@ function rectsOverlap(a, b) {
     b.y + b.height <= a.y
   );
 }
+
+// === Entity Rendering (pure) ===
+
+/**
+ * Renders Ghosty as a purple rounded rectangle.
+ * Pure function — draws to ctx without mutating the ghosty state object.
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context
+ * @param {{ x: number, y: number, width: number, height: number }} ghosty - Position and dimensions
+ */
+function renderGhosty(ctx, ghosty) {
+  ctx.fillStyle = '#9d00ff';
+  ctx.beginPath();
+  ctx.roundRect(ghosty.x, ghosty.y, ghosty.width, ghosty.height, 8);
+  ctx.fill();
+}
+
+/**
+ * Renders a pipe pair as two solid green rectangles.
+ * Top pipe extends from y=0 down to the top edge of the gap.
+ * Bottom pipe extends from the bottom edge of the gap down to the canvas floor.
+ * Pure function — does not mutate the pipe object or any external state.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The canvas 2D rendering context
+ * @param {{ x: number, gapY: number, gapHeight: number, width: number }} pipe - Pipe state
+ */
+function renderPipePair(ctx, pipe) {
+  const topPipeHeight = pipe.gapY - pipe.gapHeight / 2;
+  const bottomPipeY = pipe.gapY + pipe.gapHeight / 2;
+  const bottomPipeHeight = CANVAS_HEIGHT - bottomPipeY;
+
+  ctx.fillStyle = '#00d400';
+
+  // Top pipe: from top of canvas down to gap opening
+  ctx.fillRect(pipe.x, 0, pipe.width, topPipeHeight);
+
+  // Bottom pipe: from gap closing down to canvas bottom
+  ctx.fillRect(pipe.x, bottomPipeY, pipe.width, bottomPipeHeight);
+}
+
+/**
+ * Renders a Data Packet as a glowing purple circle.
+ * Pure function — draws to ctx without mutating the packet object.
+ * @param {CanvasRenderingContext2D} ctx - Canvas 2D context
+ * @param {{x: number, y: number, radius: number}} packet - Data Packet state
+ */
+function renderDataPacket(ctx, packet) {
+  ctx.save();
+  ctx.shadowColor = '#b026ff';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#b026ff';
+  ctx.beginPath();
+  ctx.arc(packet.x, packet.y, packet.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// === Procedural Web Audio API Placeholders ===
+
+/**
+ * Plays a jump sound effect.
+ * Intended: square wave, 400-600Hz frequency range, quick attack/decay gain envelope.
+ * Currently a placeholder — oscillator is NOT started.
+ */
+function playJumpSound() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    // Do NOT call oscillator.start()
+  } catch (e) {
+    // Silently handle — audio is non-critical
+  }
+}
+
+/**
+ * Plays a score sound effect.
+ * Intended: sine wave, 800-1200Hz frequency range, short blip gain envelope.
+ * Currently a placeholder — oscillator is NOT started.
+ */
+function playScoreSound() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    // Do NOT call oscillator.start()
+  } catch (e) {
+    // Silently handle — audio is non-critical
+  }
+}
+
+/**
+ * Plays a crash sound effect.
+ * Intended: sawtooth wave, 100-200Hz frequency range, slow decay gain envelope.
+ * Currently a placeholder — oscillator is NOT started.
+ */
+function playCrashSound() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    // Do NOT call oscillator.start()
+  } catch (e) {
+    // Silently handle — audio is non-critical
+  }
+}
+
+/**
+ * Plays a power-up collection sound effect.
+ * Intended: triangle wave, 600-1000Hz frequency range, rising sweep gain envelope.
+ * Currently a placeholder — oscillator is NOT started.
+ */
+function playPowerUpSound() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    // Do NOT call oscillator.start()
+  } catch (e) {
+    // Silently handle — audio is non-critical
+  }
+}
