@@ -389,3 +389,26 @@ function updateSteeringMode(gameContext, deltaMs) {
     steeringCharge: newCharge
   };
 }
+
+// === Autopilot Behavior ===
+
+/**
+ * Calculates the autopilot velocity to guide the player toward the center
+ * of the next upcoming pipe gap. Uses proportional control with a capped
+ * max speed for smooth navigation.
+ *
+ * Returns 0 if no pipe is ahead (maintain current position).
+ * The velocity is clamped to [-maxSpeed, maxSpeed] for smooth movement.
+ */
+function calculateAutopilotVelocity(playerY, playerHeight, pipes, playerX) {
+  const nextPipe = pipes.find(p => p.x + p.width > playerX);
+  if (!nextPipe) {
+    return 0;
+  }
+  const gapCenter = (nextPipe.gapTop + nextPipe.gapBottom) / 2;
+  const playerCenter = playerY + playerHeight / 2;
+  const diff = gapCenter - playerCenter;
+  const maxSpeed = 6;
+  const velocity = Math.max(-maxSpeed, Math.min(maxSpeed, diff * 0.15));
+  return velocity;
+}
