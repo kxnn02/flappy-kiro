@@ -351,8 +351,7 @@ function deactivateSteeringMode(gameContext) {
     ...gameContext,
     steeringModeActive: false,
     steeringModeTimer: 0,
-    steeringCharge: 0,
-    player: { ...gameContext.player, velocity: 0 }
+    steeringCharge: 0
   };
 }
 
@@ -681,10 +680,8 @@ function onInput() {
     resetGame();
     gameContext.state = transitionState(gameContext.state, 'INPUT');
   } else if (gameContext.state === GameState.PLAYING) {
-    if (!gameContext.steeringModeActive) {
-      gameContext.player.velocity = applyFlap();
-      audioManager.playJump();
-    }
+    gameContext.player.velocity = applyFlap();
+    audioManager.playJump();
   } else if (gameContext.state === GameState.GAME_OVER) {
     gameContext.state = transitionState(gameContext.state, 'INPUT');
   }
@@ -709,16 +706,9 @@ function onActivateSteering() {
 function update(deltaMs) {
   if (gameContext.state !== GameState.PLAYING) return;
 
-  // Player movement: autopilot during steering mode, gravity otherwise
-  if (gameContext.steeringModeActive) {
-    const autopilotVelocity = calculateAutopilotVelocity(
-      gameContext.player.y, SPRITE_HEIGHT, gameContext.pipes, gameContext.player.x, gameContext.steeringModeTimer
-    );
-    gameContext.player.velocity = autopilotVelocity;
-    gameContext.player.y += autopilotVelocity;
-  } else {
-    gameContext.player = updatePlayerPosition(gameContext.player);
-  }
+  // Player movement: normal gravity always applies, player retains manual control
+  // During steering mode, invincibility is handled by collision detection
+  gameContext.player = updatePlayerPosition(gameContext.player);
 
   // Update steering mode timer and depletion
   gameContext = updateSteeringMode(gameContext, deltaMs);
