@@ -1,26 +1,9 @@
-// === Physics & Game Configuration Constants ===
-const CANVAS_WIDTH = 400;        // pixels
-const CANVAS_HEIGHT = 600;       // pixels
-const GRAVITY = 980;             // px/s² (positive = downward acceleration)
-const TERMINAL_VELOCITY = 500;   // px/s (maximum downward speed)
-const FLAP_IMPULSE = -300;       // px/s (negative = upward velocity impulse)
+// === Game State Machine ===
 
-// === Canvas Setup ===
-const canvas = document.getElementById('game-canvas');
-canvas.width = CANVAS_WIDTH;
-canvas.height = CANVAS_HEIGHT;
-const ctx = canvas.getContext('2d');
-
-// === State Machine ===
-const GAME_STATES = {
+const GameState = {
   START_SCREEN: 'START_SCREEN',
   PLAYING: 'PLAYING',
   GAME_OVER: 'GAME_OVER'
-};
-
-const EVENTS = {
-  USER_INPUT: 'USER_INPUT',
-  COLLISION: 'COLLISION'
 };
 
 /**
@@ -29,293 +12,50 @@ const EVENTS = {
  * Returns current state unchanged for undefined combinations.
  */
 function transitionState(currentState, event) {
-  if (currentState === GAME_STATES.START_SCREEN && event === EVENTS.USER_INPUT) {
-    return GAME_STATES.PLAYING;
-  }
-  if (currentState === GAME_STATES.PLAYING && event === EVENTS.COLLISION) {
-    return GAME_STATES.GAME_OVER;
-  }
-  if (currentState === GAME_STATES.GAME_OVER && event === EVENTS.USER_INPUT) {
-    return GAME_STATES.START_SCREEN;
+  switch (currentState) {
+    case GameState.START_SCREEN:
+      if (event === 'INPUT') return GameState.PLAYING;
+      break;
+    case GameState.PLAYING:
+      if (event === 'COLLISION') return GameState.GAME_OVER;
+      break;
+    case GameState.GAME_OVER:
+      if (event === 'INPUT') return GameState.START_SCREEN;
+      break;
   }
   return currentState;
 }
 
-// === Game State Initialization ===
-let currentState = GAME_STATES.START_SCREEN;
+// === Physics Constants ===
 
-// === Collision Detection (pure) ===
-/**
- * Returns true if two axis-aligned bounding boxes overlap.
- * Each rect has shape: { x, y, width, height } where (x, y) is the top-left corner.
- * Pure function — no side effects, no global state references.
- */
-function rectsOverlap(a, b) {
-  return !(
-    a.x + a.width <= b.x ||
-    b.x + b.width <= a.x ||
-    a.y + a.height <= b.y ||
-    b.y + b.height <= a.y
-  );
-}
+const GRAVITY = 0.5;            // pixels/frame²
+const FLAP_IMPULSE = -8;        // pixels/frame (upward)
+const TERMINAL_VELOCITY = 12;   // max downward speed
 
-// === Asset Loading with Fallback ===
-let ghostySprite = new Image();
-let ghostySpriteReady = false;
-ghostySprite.onload = function () { ghostySpriteReady = true; };
-ghostySprite.onerror = function () { ghostySpriteReady = false; };
-ghostySprite.src = 'assets/ghosty.png';
+// === Pipe Constants ===
 
-// === Entity Rendering (pure) ===
+const PIPE_WIDTH = 60;          // pixels
+const PIPE_GAP = 150;           // vertical gap between pipes
+const PIPE_SPEED = 3;           // leftward pixels/frame
+const PIPE_INTERVAL = 90;       // frames between spawns
+const MIN_GAP_Y = 80;           // min gap top position
+const MAX_GAP_Y_OFFSET = 80;    // offset from bottom for max gap
 
-/**
- * Renders Ghosty using sprite if loaded, otherwise a purple rounded rectangle.
- * Pure function — draws to ctx without mutating the ghosty state object.
- * @param {CanvasRenderingContext2D} ctx - The 2D rendering context
- * @param {{ x: number, y: number, width: number, height: number }} ghosty - Position and dimensions
- */
-function renderGhosty(ctx, ghosty) {
-  if (ghostySpriteReady) {
-    ctx.drawImage(ghostySprite, ghosty.x, ghosty.y, ghosty.width, ghosty.height);
-  } else {
-    ctx.fillStyle = '#9d00ff';
-    ctx.beginPath();
-    ctx.roundRect(ghosty.x, ghosty.y, ghosty.width, ghosty.height, 8);
-    ctx.fill();
-  }
-}
+// === Canvas Dimensions ===
 
-/**
- * Renders a pipe pair as two solid green rectangles.
- * Top pipe extends from y=0 down to the top edge of the gap.
- * Bottom pipe extends from the bottom edge of the gap down to the canvas floor.
- * Pure function — does not mutate the pipe object or any external state.
- *
- * @param {CanvasRenderingContext2D} ctx - The canvas 2D rendering context
- * @param {{ x: number, gapY: number, gapHeight: number, width: number }} pipe - Pipe state
- */
-function renderPipePair(ctx, pipe) {
-  const topPipeHeight = pipe.gapY - pipe.gapHeight / 2;
-  const bottomPipeY = pipe.gapY + pipe.gapHeight / 2;
-  const bottomPipeHeight = CANVAS_HEIGHT - bottomPipeY;
+const CANVAS_WIDTH = 400;
+const CANVAS_HEIGHT = 600;
 
-  ctx.fillStyle = '#00d400';
+// === Data Packet Constants ===
 
-  // Top pipe: from top of canvas down to gap opening
-  ctx.fillRect(pipe.x, 0, pipe.width, topPipeHeight);
+const DATA_PACKET_RADIUS = 12;
 
-  // Bottom pipe: from gap closing down to canvas bottom
-  ctx.fillRect(pipe.x, bottomPipeY, pipe.width, bottomPipeHeight);
-}
+// === Steering Mode Constants ===
 
-/**
- * Renders a Data Packet as a glowing purple circle.
- * Pure function — draws to ctx without mutating the packet object.
- * @param {CanvasRenderingContext2D} ctx - Canvas 2D context
- * @param {{x: number, y: number, radius: number}} packet - Data Packet state
- */
-function renderDataPacket(ctx, packet) {
-  ctx.save();
-  ctx.shadowColor = '#b026ff';
-  ctx.shadowBlur = 15;
-  ctx.fillStyle = '#b026ff';
-  ctx.beginPath();
-  ctx.arc(packet.x, packet.y, packet.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
+const CHARGE_PER_PACKET = 25;           // percentage per Data Packet
+const MAX_CHARGE = 100;                 // percentage cap
+const STEERING_MODE_DURATION = 5000;    // milliseconds
 
-// === Procedural Web Audio API Placeholders ===
+// === Storage Constants ===
 
-/**
- * Plays a jump sound effect.
- * Intended: square wave, 400-600Hz frequency range, quick attack/decay gain envelope.
- * Currently a placeholder — oscillator is NOT started.
- */
-function playJumpSound() {
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-    // Do NOT call oscillator.start()
-  } catch (e) {
-    // Silently handle — audio is non-critical
-  }
-}
-
-/**
- * Plays a score sound effect.
- * Intended: sine wave, 800-1200Hz frequency range, short blip gain envelope.
- * Currently a placeholder — oscillator is NOT started.
- */
-function playScoreSound() {
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-    // Do NOT call oscillator.start()
-  } catch (e) {
-    // Silently handle — audio is non-critical
-  }
-}
-
-/**
- * Plays a crash sound effect.
- * Intended: sawtooth wave, 100-200Hz frequency range, slow decay gain envelope.
- * Currently a placeholder — oscillator is NOT started.
- */
-function playCrashSound() {
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-    // Do NOT call oscillator.start()
-  } catch (e) {
-    // Silently handle — audio is non-critical
-  }
-}
-
-/**
- * Plays a power-up collection sound effect.
- * Intended: triangle wave, 600-1000Hz frequency range, rising sweep gain envelope.
- * Currently a placeholder — oscillator is NOT started.
- */
-function playPowerUpSound() {
-  try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-    // Do NOT call oscillator.start()
-  } catch (e) {
-    // Silently handle — audio is non-critical
-  }
-}
-
-// === Player Entity State ===
-let ghosty = { x: 80, y: 250, width: 34, height: 34, velocity: 0 };
-
-// === Input Handlers ===
-
-/**
- * Unified input handler called by both keyboard and mouse listeners.
- * Dispatches action based on the current game state:
- * - START_SCREEN: transitions to PLAYING
- * - PLAYING: applies FLAP_IMPULSE to ghosty's velocity
- * - GAME_OVER: transitions to START_SCREEN
- */
-function handleInput() {
-  if (currentState === GAME_STATES.START_SCREEN) {
-    currentState = transitionState(currentState, EVENTS.USER_INPUT);
-  } else if (currentState === GAME_STATES.PLAYING) {
-    ghosty.velocity = FLAP_IMPULSE;
-  } else if (currentState === GAME_STATES.GAME_OVER) {
-    currentState = transitionState(currentState, EVENTS.USER_INPUT);
-  }
-}
-
-// Keyboard listener: detect Spacebar, prevent default scroll
-document.addEventListener('keydown', function (e) {
-  if (e.code === 'Space') {
-    e.preventDefault();
-    handleInput();
-  }
-});
-
-// Mouse/touch listener: click on canvas triggers input
-canvas.addEventListener('click', function () {
-  handleInput();
-});
-
-// === Update Function ===
-
-/**
- * Updates all game state for the current frame.
- * Applies gravity, clamps to terminal velocity, updates position.
- * Only mutates state when in PLAYING state. No draw calls.
- * @param {number} dt - Delta time in seconds
- */
-function update(dt) {
-  if (currentState !== GAME_STATES.PLAYING) {
-    return;
-  }
-
-  ghosty.velocity += GRAVITY * dt;
-  ghosty.velocity = Math.min(ghosty.velocity, TERMINAL_VELOCITY);
-  ghosty.y += ghosty.velocity * dt;
-}
-
-// === Demo Entities for Render ===
-const demoPipe = { x: 280, gapY: 300, gapHeight: 150, width: 52 };
-const demoPacket = { x: 306, y: 300, radius: 10 };
-
-// === Cached DOM References ===
-const startOverlay = document.getElementById('start-overlay');
-const scoreOverlay = document.getElementById('score-overlay');
-const gameoverOverlay = document.getElementById('gameover-overlay');
-
-// === Main Render Function ===
-
-/**
- * Renders the current frame. Clears canvas, fills background,
- * draws demo entities, and toggles overlay visibility per game state.
- * Does NOT mutate any game state.
- */
-function render() {
-  // 1. Clear the entire canvas
-  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-  // 2. Fill background with dark theme color
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-  // 3. Render entities (Ghosty always visible, demo pipe and packet)
-  renderGhosty(ctx, ghosty);
-  renderPipePair(ctx, demoPipe);
-  renderDataPacket(ctx, demoPacket);
-
-  // 4. Toggle overlay visibility based on current game state
-  if (currentState === GAME_STATES.START_SCREEN) {
-    startOverlay.style.display = 'flex';
-    scoreOverlay.style.display = 'none';
-    gameoverOverlay.style.display = 'none';
-  } else if (currentState === GAME_STATES.PLAYING) {
-    startOverlay.style.display = 'none';
-    scoreOverlay.style.display = 'flex';
-    gameoverOverlay.style.display = 'none';
-  } else if (currentState === GAME_STATES.GAME_OVER) {
-    startOverlay.style.display = 'none';
-    scoreOverlay.style.display = 'none';
-    gameoverOverlay.style.display = 'flex';
-  }
-}
-
-// === Game Loop ===
-
-let previousTimestamp = null;
-
-/**
- * Main game loop driven by requestAnimationFrame.
- * Computes delta time in seconds, clamped to 0.1s max.
- * Calls update(dt) then render() each frame regardless of game state.
- * @param {number} timestamp - High-resolution timestamp from requestAnimationFrame
- */
-function gameLoop(timestamp) {
-  let dt = previousTimestamp ? (timestamp - previousTimestamp) / 1000 : 0;
-  dt = Math.min(dt, 0.1);
-  previousTimestamp = timestamp;
-
-  update(dt);
-  render();
-  requestAnimationFrame(gameLoop);
-}
-
-// Start the game loop
-requestAnimationFrame(gameLoop);
+const HIGH_SCORE_KEY = 'flappyKiroHighScore';
