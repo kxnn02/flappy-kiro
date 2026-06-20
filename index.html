@@ -14,6 +14,30 @@
 
     <canvas id="game-canvas"></canvas>
 
+    <!-- Start screen overlay for fade transitions -->
+    <div id="start-overlay">
+      <h1>Flappy Kiro</h1>
+      <p>Press Space or Click to Start</p>
+    </div>
+
+    <!-- Pause overlay -->
+    <div id="pause-overlay" style="display: none;">
+      <span class="overlay-title">PAUSED</span>
+    </div>
+
+    <!-- Death recap overlay -->
+    <div id="death-recap-overlay" style="display: none;">
+      <span class="overlay-title">Game Over</span>
+      <p id="death-recap-score">Score: 0</p>
+      <p id="death-recap-highscore">High Score: 0</p>
+      <p id="death-recap-new-high" class="new-high-score" style="display: none;">NEW HIGH SCORE</p>
+      <p id="death-recap-countdown">Restarting in 3...</p>
+      <p id="death-recap-restart" style="display: none;">Press Space or Tap to Restart</p>
+    </div>
+
+    <!-- Score popup container for floating "+1" elements -->
+    <div id="score-popup-container"></div>
+
     <button id="steering-activate-btn" style="display: none;">Activate Steering</button>
   </div>
 
