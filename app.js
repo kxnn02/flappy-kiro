@@ -327,3 +327,65 @@ function updateChargeBar(charge) {
     bar.style.width = `${charge}%`;
   }
 }
+
+// === Steering Mode Controller ===
+
+/**
+ * Activates Steering Mode by setting the active flag and initializing
+ * the 5-second duration timer. Returns a new game context with steering active.
+ */
+function activateSteeringMode(gameContext) {
+  return {
+    ...gameContext,
+    steeringModeActive: true,
+    steeringModeTimer: STEERING_MODE_DURATION
+  };
+}
+
+/**
+ * Deactivates Steering Mode, restoring normal gameplay state.
+ * Clears the active flag, resets the timer, and zeroes the charge meter.
+ */
+function deactivateSteeringMode(gameContext) {
+  return {
+    ...gameContext,
+    steeringModeActive: false,
+    steeringModeTimer: 0,
+    steeringCharge: 0
+  };
+}
+
+/**
+ * Depletes steering charge linearly over the full STEERING_MODE_DURATION.
+ * Drain rate is MAX_CHARGE / STEERING_MODE_DURATION per millisecond.
+ * Returns the new charge clamped to a minimum of 0.
+ */
+function depleteCharge(currentCharge, elapsedMs) {
+  const drainRate = MAX_CHARGE / STEERING_MODE_DURATION;
+  const newCharge = currentCharge - (drainRate * elapsedMs);
+  return Math.max(newCharge, 0);
+}
+
+/**
+ * Updates steering mode state each frame. Decrements the timer,
+ * depletes the charge, and deactivates if either reaches zero.
+ * Returns the game context unchanged if steering mode is not active.
+ */
+function updateSteeringMode(gameContext, deltaMs) {
+  if (!gameContext.steeringModeActive) {
+    return gameContext;
+  }
+
+  const newTimer = gameContext.steeringModeTimer - deltaMs;
+  const newCharge = depleteCharge(gameContext.steeringCharge, deltaMs);
+
+  if (newTimer <= 0 || newCharge <= 0) {
+    return deactivateSteeringMode(gameContext);
+  }
+
+  return {
+    ...gameContext,
+    steeringModeTimer: newTimer,
+    steeringCharge: newCharge
+  };
+}
