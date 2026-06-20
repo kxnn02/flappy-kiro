@@ -412,3 +412,71 @@ function calculateAutopilotVelocity(playerY, playerHeight, pipes, playerX) {
   const velocity = Math.max(-maxSpeed, Math.min(maxSpeed, diff * 0.15));
   return velocity;
 }
+
+// === Neon Matrix Grid Renderer ===
+
+/**
+ * State for falling matrix-style character columns.
+ * Each column tracks a y position and fall speed.
+ */
+let matrixColumns = [];
+
+/**
+ * Initializes the matrix grid columns for the neon background effect.
+ * Creates one column per 20px of canvas width, each with a random
+ * starting y position and random fall speed between 2-6 pixels/frame.
+ */
+function initMatrixGrid(canvasWidth, canvasHeight) {
+  const columnWidth = 20;
+  const numColumns = Math.ceil(canvasWidth / columnWidth);
+  matrixColumns = Array.from({ length: numColumns }, () => ({
+    y: Math.random() * canvasHeight,
+    speed: 2 + Math.random() * 4
+  }));
+}
+
+/**
+ * Renders the animated neon matrix grid background used during Steering Mode.
+ * Draws a dark purple base, semi-transparent neon green grid lines,
+ * and falling matrix-style characters that wrap around the canvas.
+ */
+function renderNeonMatrixGrid(ctx, canvasWidth, canvasHeight) {
+  // Dark purple base
+  ctx.fillStyle = '#0a0015';
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // Grid lines (neon green)
+  ctx.strokeStyle = 'rgba(0, 255, 100, 0.15)';
+  ctx.lineWidth = 1;
+  const gridSpacing = 30;
+
+  // Vertical grid lines
+  for (let x = 0; x < canvasWidth; x += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvasHeight);
+    ctx.stroke();
+  }
+
+  // Horizontal grid lines
+  for (let y = 0; y < canvasHeight; y += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvasWidth, y);
+    ctx.stroke();
+  }
+
+  // Falling matrix-style characters
+  ctx.fillStyle = 'rgba(0, 255, 100, 0.7)';
+  ctx.font = '14px monospace';
+  const columnWidth = 20;
+  for (let i = 0; i < matrixColumns.length; i++) {
+    const col = matrixColumns[i];
+    const char = String.fromCharCode(0x30A0 + Math.random() * 96);
+    ctx.fillText(char, i * columnWidth, col.y);
+    col.y += col.speed;
+    if (col.y > canvasHeight) {
+      col.y = 0;
+    }
+  }
+}
