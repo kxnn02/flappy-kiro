@@ -588,12 +588,22 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
     // Player sprite (with translucent purple overlay during Steering Mode)
     if (steeringModeActive) {
       ctx.globalAlpha = 0.6;
-      ctx.drawImage(spriteImage, player.x, player.y);
+      if (spriteLoadFailed) {
+        ctx.fillStyle = '#a020f0';
+        ctx.fillRect(player.x, player.y, SPRITE_WIDTH, SPRITE_HEIGHT);
+      } else {
+        ctx.drawImage(spriteImage, player.x, player.y, SPRITE_WIDTH, SPRITE_HEIGHT);
+      }
       ctx.globalAlpha = 1.0;
       ctx.fillStyle = 'rgba(128, 0, 255, 0.3)';
-      ctx.fillRect(player.x, player.y, spriteImage.width, spriteImage.height);
+      ctx.fillRect(player.x, player.y, SPRITE_WIDTH, SPRITE_HEIGHT);
     } else {
-      ctx.drawImage(spriteImage, player.x, player.y);
+      if (spriteLoadFailed) {
+        ctx.fillStyle = '#a020f0';
+        ctx.fillRect(player.x, player.y, SPRITE_WIDTH, SPRITE_HEIGHT);
+      } else {
+        ctx.drawImage(spriteImage, player.x, player.y, SPRITE_WIDTH, SPRITE_HEIGHT);
+      }
     }
 
     // Score
@@ -623,3 +633,210 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
     ctx.textAlign = 'left';
   }
 }
+
+// === Sprite Constants ===
+
+const SPRITE_WIDTH = 34;
+const SPRITE_HEIGHT = 34;
+
+// === Game Initialization and Main Loop ===
+
+let gameContext = null;
+let spriteImage = null;
+let spriteLoadFailed = false;
+let audioManager = null;
+let lastTimestamp = 0;
+let ctx = null;
+
+/**
+ * Resets the game context to initial playing state.
+ * Called when transitioning from START_SCREEN or restarting after GAME_OVER.
+ */
+function resetGame() {
+  gameContext.player = { x: 80, y: 250, velocity: 0 };
+  gameContext.pipes = [];
+  gameContext.dataPackets = [];
+  gameContext.score = 0;
+  gameContext.steeringCharge = 0;
+  gameContext.steeringModeActive = false;
+  gameContext.steeringModeTimer = 0;
+  gameContext.frameCount = 0;
+  updateChargeBar(0);
+}
+
+/**
+ * Handles primary input (Space / Click).
+ * START_SCREEN → reset and play; PLAYING → flap; GAME_OVER → restart.
+ */
+function onInput() {
+  if (gameContext.state === GameState.START_SCREEN) {
+    resetGame();
+    gameContext.state = transitionState(gameContext.state, 'INPUT');
+  } else if (gameContext.state === GameState.PLAYING) {
+    if (!gameContext.steeringModeActive) {
+      gameContext.player.velocity = applyFlap();
+      audioManager.playJump();
+    }
+  } else if (gameContext.state === GameState.GAME_OVER) {
+    gameContext.state = transitionState(gameContext.state, 'INPUT');
+  }
+}
+
+/**
+ * Handles Steering Mode activation input (Shift / Button).
+ * Only activates if PLAYING and charge is full.
+ */
+function onActivateSteering() {
+  if (gameContext.state === GameState.PLAYING && canActivateSteering(gameContext.steeringCharge, gameContext.steeringModeActive)) {
+    gameContext = activateSteeringMode(gameContext);
+    const btn = document.getElementById('steering-activate-btn');
+    if (btn) btn.style.display = 'none';
+  }
+}
+
+/**
+ * Updates game state each frame. Only processes during PLAYING state.
+ * Orchestrates physics, pipes, data packets, steering mode, collision, and scoring.
+ */
+function update(deltaMs) {
+  if (gameContext.state !== GameState.PLAYING) return;
+
+  // Player movement: autopilot during steering mode, gravity otherwise
+  if (gameContext.steeringModeActive) {
+    const autopilotVelocity = calculateAutopilotVelocity(
+      gameContext.player.y, SPRITE_HEIGHT, gameContext.pipes, gameContext.player.x
+    );
+    gameContext.player.velocity = autopilotVelocity;
+    gameContext.player.y += autopilotVelocity;
+  } else {
+    gameContext.player = updatePlayerPosition(gameContext.player);
+  }
+
+  // Update steering mode timer and depletion
+  gameContext = updateSteeringMode(gameContext, deltaMs);
+
+  // Move pipes
+  gameContext.pipes = gameContext.pipes.map(movePipe);
+
+  // Spawn new pipes based on frame count
+  gameContext.frameCount++;
+  if (gameContext.frameCount >= PIPE_INTERVAL) {
+    gameContext.frameCount = 0;
+    const newPipe = generatePipe(CANVAS_WIDTH, CANVAS_HEIGHT);
+    gameContext.pipes.push(newPipe);
+
+    // Spawn data packet with 70% chance per new pipe
+    if (Math.random() < 0.7) {
+      const packet = spawnDataPacket(newPipe);
+      gameContext.dataPackets.push(packet);
+    }
+  }
+
+  // Remove off-screen pipes
+  gameContext.pipes = removeOffScreenPipes(gameContext.pipes);
+
+  // Move and clean up data packets
+  gameContext.dataPackets = gameContext.dataPackets.map(moveDataPacket);
+  gameContext.dataPackets = removeOffScreenDataPackets(gameContext.dataPackets);
+
+  // Collect data packets
+  const playerRect = getPlayerRect(gameContext.player, SPRITE_WIDTH, SPRITE_HEIGHT);
+  const { collected, remaining } = collectDataPackets(playerRect, gameContext.dataPackets);
+  gameContext.dataPackets = remaining;
+
+  if (collected.length > 0) {
+    gameContext.steeringCharge = addSteeringCharge(gameContext.steeringCharge, collected.length);
+    updateChargeBar(gameContext.steeringCharge);
+  }
+
+  // Show/hide activation button based on charge readiness
+  const btn = document.getElementById('steering-activate-btn');
+  if (btn) {
+    if (canActivateSteering(gameContext.steeringCharge, gameContext.steeringModeActive)) {
+      btn.style.display = 'block';
+    } else {
+      btn.style.display = 'none';
+    }
+  }
+
+  // Scoring: check if player passed any pipe
+  for (const pipe of gameContext.pipes) {
+    if (shouldIncrementScore(gameContext.player.x, pipe)) {
+      pipe.scored = true;
+      gameContext.score++;
+    }
+  }
+
+  // Collision detection
+  const collision = checkCollision(playerRect, gameContext.pipes, CANVAS_HEIGHT, gameContext.steeringModeActive);
+  if (collision) {
+    gameContext.state = transitionState(gameContext.state, 'COLLISION');
+    audioManager.playGameOver();
+    gameContext.highScore = saveHighScore(gameContext.score, gameContext.highScore);
+  }
+}
+
+/**
+ * Main game loop driven by requestAnimationFrame.
+ * Calculates delta time and orchestrates update + render each frame.
+ */
+function gameLoop(timestamp) {
+  const deltaMs = timestamp - lastTimestamp;
+  lastTimestamp = timestamp;
+
+  update(deltaMs);
+  render(ctx, gameContext, spriteImage, CANVAS_WIDTH, CANVAS_HEIGHT);
+  requestAnimationFrame(gameLoop);
+}
+
+/**
+ * Initializes the game: sets up canvas, loads assets, initializes subsystems,
+ * and starts the game loop.
+ */
+function initGame() {
+  const canvas = document.getElementById('game-canvas');
+  canvas.width = CANVAS_WIDTH;
+  canvas.height = CANVAS_HEIGHT;
+  ctx = canvas.getContext('2d');
+
+  // Load sprite image with fallback
+  spriteImage = new Image();
+  spriteImage.src = 'assets/ghosty.png';
+  spriteImage.onerror = () => {
+    spriteLoadFailed = true;
+  };
+
+  // Load high score
+  const highScore = loadHighScore();
+
+  // Create audio manager
+  audioManager = createAudioManager();
+
+  // Initialize matrix grid for steering mode background
+  initMatrixGrid(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+  // Initialize game context
+  gameContext = {
+    state: GameState.START_SCREEN,
+    player: { x: 80, y: 250, velocity: 0 },
+    pipes: [],
+    dataPackets: [],
+    score: 0,
+    highScore: highScore,
+    frameCount: 0,
+    steeringCharge: 0,
+    steeringModeActive: false,
+    steeringModeTimer: 0
+  };
+
+  // Update charge bar to initial state
+  updateChargeBar(0);
+
+  // Setup input handlers
+  setupInputHandlers(canvas, onInput, onActivateSteering);
+
+  // Start game loop
+  requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener('DOMContentLoaded', initGame);
