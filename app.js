@@ -351,7 +351,8 @@ function deactivateSteeringMode(gameContext) {
     ...gameContext,
     steeringModeActive: false,
     steeringModeTimer: 0,
-    steeringCharge: 0
+    steeringCharge: 0,
+    player: { ...gameContext.player, velocity: 0 }
   };
 }
 
@@ -400,7 +401,7 @@ function updateSteeringMode(gameContext, deltaMs) {
  * Returns 0 if no pipe is ahead (maintain current position).
  * The velocity is clamped to [-maxSpeed, maxSpeed] for smooth movement.
  */
-function calculateAutopilotVelocity(playerY, playerHeight, pipes, playerX) {
+function calculateAutopilotVelocity(playerY, playerHeight, pipes, playerX, timeRemainingMs) {
   const nextPipe = pipes.find(p => p.x + p.width > playerX);
   if (!nextPipe) {
     return 0;
@@ -409,7 +410,14 @@ function calculateAutopilotVelocity(playerY, playerHeight, pipes, playerX) {
   const playerCenter = playerY + playerHeight / 2;
   const diff = gapCenter - playerCenter;
   const maxSpeed = 6;
-  const velocity = Math.max(-maxSpeed, Math.min(maxSpeed, diff * 0.15));
+  let velocity = Math.max(-maxSpeed, Math.min(maxSpeed, diff * 0.15));
+
+  // Ease off velocity in the last 800ms to prevent post-steering collision
+  if (timeRemainingMs < 800) {
+    const easeFactor = timeRemainingMs / 800;
+    velocity *= easeFactor;
+  }
+
   return velocity;
 }
 
@@ -606,11 +614,11 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
       }
     }
 
-    // Score
+    // Score (offset below the steering charge bar)
     ctx.fillStyle = '#ffffff';
     ctx.font = '20px monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(formatScore(score, highScore), 10, 30);
+    ctx.fillText(formatScore(score, highScore), 10, 50);
   }
 
   if (state === GameState.START_SCREEN) {
@@ -704,7 +712,7 @@ function update(deltaMs) {
   // Player movement: autopilot during steering mode, gravity otherwise
   if (gameContext.steeringModeActive) {
     const autopilotVelocity = calculateAutopilotVelocity(
-      gameContext.player.y, SPRITE_HEIGHT, gameContext.pipes, gameContext.player.x
+      gameContext.player.y, SPRITE_HEIGHT, gameContext.pipes, gameContext.player.x, gameContext.steeringModeTimer
     );
     gameContext.player.velocity = autopilotVelocity;
     gameContext.player.y += autopilotVelocity;
