@@ -59,3 +59,34 @@ const STEERING_MODE_DURATION = 5000;    // milliseconds
 // === Storage Constants ===
 
 const HIGH_SCORE_KEY = 'flappyKiroHighScore';
+
+// === Physics Engine ===
+
+/**
+ * Applies gravity to the current velocity and clamps to terminal velocity.
+ * Returns the new velocity (positive = downward).
+ */
+function applyGravity(velocity) {
+  const newVelocity = velocity + GRAVITY;
+  return Math.min(newVelocity, TERMINAL_VELOCITY);
+}
+
+/**
+ * Returns the flap impulse constant (negative = upward).
+ */
+function applyFlap() {
+  return FLAP_IMPULSE;
+}
+
+/**
+ * Applies gravity to the player and updates vertical position.
+ * Returns a new player object with updated velocity and y.
+ */
+function updatePlayerPosition(player) {
+  const newVelocity = applyGravity(player.velocity);
+  return {
+    ...player,
+    velocity: newVelocity,
+    y: player.y + newVelocity
+  };
+}
