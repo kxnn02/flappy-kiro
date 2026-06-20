@@ -480,3 +480,146 @@ function renderNeonMatrixGrid(ctx, canvasWidth, canvasHeight) {
     }
   }
 }
+
+// === Audio Manager ===
+
+/**
+ * Creates an audio manager that preloads sound effects and provides
+ * playback methods. Wraps play() calls in try/catch to handle
+ * browser autoplay policy silently.
+ */
+function createAudioManager() {
+  const jumpSound = new Audio('assets/jump.wav');
+  const gameOverSound = new Audio('assets/game_over.wav');
+
+  return {
+    playJump() {
+      try { jumpSound.currentTime = 0; jumpSound.play().catch(() => {}); } catch (e) {}
+    },
+    playGameOver() {
+      try { gameOverSound.currentTime = 0; gameOverSound.play().catch(() => {}); } catch (e) {}
+    }
+  };
+}
+
+// === Input Handler ===
+
+/**
+ * Sets up all input handlers for the game.
+ * Listens for Spacebar and mouse click to trigger flap/state transitions (onInput).
+ * Listens for Shift key and on-screen activation button for Steering Mode (onActivateSteering).
+ * Prevents default browser behavior for game keys to avoid page scrolling.
+ */
+function setupInputHandlers(canvas, onInput, onActivateSteering) {
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      onInput();
+    }
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+      e.preventDefault();
+      onActivateSteering();
+    }
+  });
+
+  canvas.addEventListener('click', () => {
+    onInput();
+  });
+
+  // On-screen activation button for Steering Mode
+  const activateBtn = document.getElementById('steering-activate-btn');
+  if (activateBtn) {
+    activateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onActivateSteering();
+    });
+  }
+}
+
+// === Renderer ===
+
+/**
+ * Renders a single data packet as a glowing purple circle.
+ * Uses canvas shadowBlur for the neon glow effect.
+ */
+function renderDataPacket(ctx, packet) {
+  ctx.beginPath();
+  ctx.arc(packet.x, packet.y, packet.radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(160, 32, 240, 0.8)';
+  ctx.fill();
+  ctx.shadowColor = '#a020f0';
+  ctx.shadowBlur = 10;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.closePath();
+}
+
+/**
+ * Main render function. Draws all visual elements to the canvas
+ * based on the current game state. Delegates to renderNeonMatrixGrid
+ * when Steering Mode is active.
+ *
+ * This function does NOT mutate game state — it only reads and draws.
+ */
+function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
+  const { state, player, pipes, score, highScore, steeringModeActive, dataPackets } = gameContext;
+
+  // Background
+  if (steeringModeActive) {
+    renderNeonMatrixGrid(ctx, canvasWidth, canvasHeight);
+  } else {
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  if (state === GameState.PLAYING || state === GameState.GAME_OVER) {
+    // Pipes (green rectangles)
+    ctx.fillStyle = '#00d400';
+    for (const pipe of pipes) {
+      ctx.fillRect(pipe.x, 0, pipe.width, pipe.gapTop);
+      ctx.fillRect(pipe.x, pipe.gapBottom, pipe.width, canvasHeight - pipe.gapBottom);
+    }
+
+    // Data packets (glowing purple circles)
+    for (const packet of dataPackets) {
+      renderDataPacket(ctx, packet);
+    }
+
+    // Player sprite (with translucent purple overlay during Steering Mode)
+    if (steeringModeActive) {
+      ctx.globalAlpha = 0.6;
+      ctx.drawImage(spriteImage, player.x, player.y);
+      ctx.globalAlpha = 1.0;
+      ctx.fillStyle = 'rgba(128, 0, 255, 0.3)';
+      ctx.fillRect(player.x, player.y, spriteImage.width, spriteImage.height);
+    } else {
+      ctx.drawImage(spriteImage, player.x, player.y);
+    }
+
+    // Score
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '20px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(formatScore(score, highScore), 10, 30);
+  }
+
+  if (state === GameState.START_SCREEN) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '32px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Flappy Kiro', canvasWidth / 2, canvasHeight / 3);
+    ctx.font = '16px monospace';
+    ctx.fillText('Press SPACE or Click to Start', canvasWidth / 2, canvasHeight / 2);
+    ctx.textAlign = 'left';
+  }
+
+  if (state === GameState.GAME_OVER) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '32px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Game Over', canvasWidth / 2, canvasHeight / 3);
+    ctx.font = '16px monospace';
+    ctx.fillText('Press SPACE or Click to Restart', canvasWidth / 2, canvasHeight / 2);
+    ctx.textAlign = 'left';
+  }
+}
