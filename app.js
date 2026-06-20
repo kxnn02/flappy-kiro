@@ -809,6 +809,52 @@ function moveSlowMotionPickup(pickup, speed) {
 }
 
 /**
+ * Renders a slow-motion pickup as a glowing yellow circle with a clock icon.
+ * Uses Canvas arc primitives with shadowColor/shadowBlur for glow effect.
+ * Does NOT mutate state.
+ */
+function renderSlowMotionPickup(ctx, pickup) {
+  ctx.save();
+
+  // Glowing yellow circle
+  ctx.beginPath();
+  ctx.arc(pickup.x, pickup.y, pickup.radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 221, 0, 0.8)';
+  ctx.shadowColor = '#ffdd00';
+  ctx.shadowBlur = 10;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.closePath();
+
+  // Clock icon: circle outline with two hands
+  const cx = pickup.x;
+  const cy = pickup.y;
+  const iconScale = pickup.radius / 12;
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5 * iconScale;
+
+  // Clock face outline
+  ctx.beginPath();
+  ctx.arc(cx, cy, 5 * iconScale, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Hour hand (pointing up-right)
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + 2 * iconScale, cy - 3 * iconScale);
+  ctx.stroke();
+
+  // Minute hand (pointing up)
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx, cy - 4 * iconScale);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
  * Circle-rect collision detection between a player rectangle and a slow-motion pickup.
  * Finds the closest point on the rectangle to the circle center,
  * then checks if the distance is within the circle's radius.
@@ -1635,8 +1681,10 @@ function initParallaxLayers(canvasWidth, canvasHeight) {
  * Returns a new layers object (pure update).
  */
 function updateParallaxLayers(layers, pipeSpeed, dt) {
-  const backAdvance = pipeSpeed * layers.back.speedRatio * dt;
-  const frontAdvance = pipeSpeed * layers.front.speedRatio * dt;
+  // Normalize dt from milliseconds to frame units (16.67ms = 1 frame at 60fps)
+  const frameScale = dt / 16.67;
+  const backAdvance = pipeSpeed * layers.back.speedRatio * frameScale;
+  const frontAdvance = pipeSpeed * layers.front.speedRatio * frameScale;
 
   const newBackOffset = (layers.back.offset + backAdvance) % layers.back.tileWidth;
   const newFrontOffset = (layers.front.offset + frontAdvance) % layers.front.tileWidth;
@@ -1846,7 +1894,7 @@ function renderNeonMatrixGrid(ctx, canvasWidth, canvasHeight) {
     ctx.stroke();
   }
 
-  // Falling matrix-style characters
+  // Falling matrix-style characters (render only, no mutation)
   ctx.fillStyle = 'rgba(0, 255, 100, 0.7)';
   ctx.font = '14px monospace';
   const columnWidth = 20;
@@ -1854,7 +1902,18 @@ function renderNeonMatrixGrid(ctx, canvasWidth, canvasHeight) {
     const col = matrixColumns[i];
     const char = String.fromCharCode(0x30A0 + Math.random() * 96);
     ctx.fillText(char, i * columnWidth, col.y);
-    col.y += col.speed;
+  }
+}
+
+/**
+ * Updates the matrix column positions using delta time for frame-rate independence.
+ * Called from the update loop, NOT from render.
+ */
+function updateMatrixGrid(deltaMs, canvasHeight) {
+  const frameScale = deltaMs / 16.67;
+  for (let i = 0; i < matrixColumns.length; i++) {
+    const col = matrixColumns[i];
+    col.y += col.speed * frameScale;
     if (col.y > canvasHeight) {
       col.y = 0;
     }
@@ -2628,6 +2687,9 @@ function renderDataPacket(ctx, packet) {
 function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
   const { state, player, pipes, score, highScore, steeringModeActive, dataPackets, screenShake } = gameContext;
 
+  // Clear the entire canvas before drawing (prevents ghosted frames during screen shake)
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
   // Apply screen shake offset via temporary transform
   const shakeOffset = getShakeOffset(screenShake);
   const shakeActive = shakeOffset.offsetX !== 0 || shakeOffset.offsetY !== 0;
@@ -2667,6 +2729,11 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
     // Shield pickups (glowing blue circles with shield icon)
     for (const pickup of gameContext.shieldPickups) {
       renderShieldPickup(ctx, pickup);
+    }
+
+    // Slow-motion pickups (yellow circles)
+    for (const pickup of gameContext.slowMotionPickups) {
+      renderSlowMotionPickup(ctx, pickup);
     }
 
     // Particles (collection burst effects)
@@ -2751,25 +2818,7 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
     }
   }
 
-  if (state === GameState.START_SCREEN) {
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '32px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Flappy Kiro', canvasWidth / 2, canvasHeight / 3);
-    ctx.font = '16px monospace';
-    ctx.fillText('Press SPACE or Click to Start', canvasWidth / 2, canvasHeight / 2);
-    ctx.textAlign = 'left';
-  }
-
-  if (state === GameState.GAME_OVER) {
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '32px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Game Over', canvasWidth / 2, canvasHeight / 3);
-    ctx.font = '16px monospace';
-    ctx.fillText('Press SPACE or Click to Restart', canvasWidth / 2, canvasHeight / 2);
-    ctx.textAlign = 'left';
-  }
+  // START_SCREEN and GAME_OVER text is handled by DOM overlays — no canvas text needed
 
   // Restore canvas transform if screen shake was applied
   if (shakeActive) {
@@ -2960,16 +3009,26 @@ function update(deltaMs) {
   // Update difficulty based on current score
   gameContext.currentDifficulty = getDifficultyParams(gameContext.score);
 
-  // Player movement: apply scaled gravity and terminal velocity
+  // Player movement: apply scaled gravity and terminal velocity (frame-rate independent)
   const speedMult = getEffectiveSpeedMultiplier(gameContext);
-  const scaledGravity = GRAVITY * s * speedMult;
+  const frameScalePhysics = deltaMs / 16.67;
+  const scaledGravity = GRAVITY * s * speedMult * frameScalePhysics;
   const scaledTerminalVelocity = TERMINAL_VELOCITY * s * speedMult;
-  const newVelocity = Math.min(gameContext.player.velocity + scaledGravity, scaledTerminalVelocity);
-  gameContext.player = {
-    ...gameContext.player,
-    velocity: newVelocity,
-    y: gameContext.player.y + newVelocity
-  };
+
+  // During Steering Mode, use autopilot to navigate through pipe gaps
+  if (gameContext.steeringModeActive) {
+    const sprW = SPRITE_WIDTH * s;
+    const sprH = SPRITE_HEIGHT * s;
+    const autopilotVelocity = calculateAutopilotVelocity(
+      gameContext.player.y, sprH, gameContext.pipes, gameContext.player.x, gameContext.steeringModeTimer
+    );
+    gameContext.player.velocity = autopilotVelocity * s;
+    gameContext.player.y = gameContext.player.y + gameContext.player.velocity * frameScalePhysics;
+  } else {
+    const newVelocity = Math.min(gameContext.player.velocity + scaledGravity, scaledTerminalVelocity);
+    gameContext.player.velocity = newVelocity;
+    gameContext.player.y = gameContext.player.y + newVelocity * frameScalePhysics;
+  }
 
   // Trail_Effect: sample player position (disabled when reduced motion is enabled)
   if (!reducedMotionEnabled && gameContext.trail) {
@@ -3016,6 +3075,11 @@ function update(deltaMs) {
   // Update parallax background layers
   gameContext.parallaxLayers = updateParallaxLayers(gameContext.parallaxLayers, gameContext.currentDifficulty.pipeSpeed * s, deltaMs);
 
+  // Update matrix grid columns if steering mode is active (frame-rate independent)
+  if (gameContext.steeringModeActive) {
+    updateMatrixGrid(deltaMs, canvasH);
+  }
+
   // Update Day/Night cycle (freezes when paused; paused is already handled above)
   gameContext.dayNightCycle = updateDayNightCycle(gameContext.dayNightCycle, deltaMs, gameContext.paused);
 
@@ -3041,8 +3105,9 @@ function update(deltaMs) {
     activeParticles.length = writeIdx;
   }
 
-  // Move pipes in-place using current difficulty speed scaled
-  const currentSpeed = gameContext.currentDifficulty.pipeSpeed * s * speedMult;
+  // Move pipes in-place using current difficulty speed scaled (frame-rate independent)
+  const frameScale = deltaMs / 16.67;
+  const currentSpeed = gameContext.currentDifficulty.pipeSpeed * s * speedMult * frameScale;
   for (let i = 0; i < gameContext.pipes.length; i++) {
     gameContext.pipes[i].x -= currentSpeed;
   }
@@ -3112,24 +3177,61 @@ function update(deltaMs) {
     pipes.length = writeIdx;
   }
 
-  // Move and clean up data packets using current difficulty speed
-  gameContext.dataPackets = gameContext.dataPackets.map(packet => ({ ...packet, x: packet.x - currentSpeed }));
-  gameContext.dataPackets = removeOffScreenDataPackets(gameContext.dataPackets);
+  // Move and clean up data packets in-place using current difficulty speed
+  {
+    let writeIdx = 0;
+    for (let i = 0; i < gameContext.dataPackets.length; i++) {
+      const packet = gameContext.dataPackets[i];
+      packet.x -= currentSpeed;
+      if (packet.x + packet.radius > 0) {
+        gameContext.dataPackets[writeIdx] = packet;
+        writeIdx++;
+      }
+    }
+    gameContext.dataPackets.length = writeIdx;
+  }
 
-  // Move shield pickups and remove off-screen ones
-  gameContext.shieldPickups = gameContext.shieldPickups
-    .map(pickup => moveShieldPickup(pickup, currentSpeed, deltaMs))
-    .filter(pickup => !isShieldOffScreen(pickup));
+  // Move shield pickups in-place and remove off-screen ones
+  {
+    let writeIdx = 0;
+    for (let i = 0; i < gameContext.shieldPickups.length; i++) {
+      const pickup = gameContext.shieldPickups[i];
+      pickup.x -= currentSpeed;
+      if (pickup.x + pickup.radius > 0) {
+        gameContext.shieldPickups[writeIdx] = pickup;
+        writeIdx++;
+      }
+    }
+    gameContext.shieldPickups.length = writeIdx;
+  }
 
-  // Move magnet pickups and remove off-screen ones
-  gameContext.magnetPickups = gameContext.magnetPickups
-    .map(pickup => moveMagnetPickup(pickup, currentSpeed, deltaMs))
-    .filter(pickup => !isMagnetOffScreen(pickup));
+  // Move magnet pickups in-place and remove off-screen ones
+  {
+    let writeIdx = 0;
+    for (let i = 0; i < gameContext.magnetPickups.length; i++) {
+      const pickup = gameContext.magnetPickups[i];
+      pickup.x -= currentSpeed;
+      if (pickup.x + pickup.radius > 0) {
+        gameContext.magnetPickups[writeIdx] = pickup;
+        writeIdx++;
+      }
+    }
+    gameContext.magnetPickups.length = writeIdx;
+  }
 
-  // Move slow-motion pickups and remove off-screen ones
-  gameContext.slowMotionPickups = gameContext.slowMotionPickups
-    .map(pickup => moveSlowMotionPickup(pickup, currentSpeed))
-    .filter(pickup => pickup.x + pickup.radius > 0);
+  // Move slow-motion pickups in-place and remove off-screen ones
+  {
+    let writeIdx = 0;
+    for (let i = 0; i < gameContext.slowMotionPickups.length; i++) {
+      const pickup = gameContext.slowMotionPickups[i];
+      pickup.x -= currentSpeed;
+      if (pickup.x + pickup.radius > 0) {
+        gameContext.slowMotionPickups[writeIdx] = pickup;
+        writeIdx++;
+      }
+    }
+    gameContext.slowMotionPickups.length = writeIdx;
+  }
 
   // Collect data packets with scaled player hitbox
   const scaledSpriteW = SPRITE_WIDTH * s;
@@ -3636,7 +3738,14 @@ function handleLeaderboardOnGameOver() {
  * Calculates delta time and orchestrates update + render each frame.
  */
 function gameLoop(timestamp) {
-  const deltaMs = timestamp - lastTimestamp;
+  // Guard against first-frame spike: skip the first frame where lastTimestamp is 0
+  if (lastTimestamp === 0) {
+    lastTimestamp = timestamp;
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  const deltaMs = Math.min(timestamp - lastTimestamp, 50); // Cap at 50ms to prevent physics explosions
   lastTimestamp = timestamp;
 
   update(deltaMs);
