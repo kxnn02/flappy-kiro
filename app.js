@@ -90,3 +90,46 @@ function updatePlayerPosition(player) {
     y: player.y + newVelocity
   };
 }
+
+// === Pipe System ===
+
+/**
+ * Generates a new pipe pair at the right edge of the canvas.
+ * The gap top position is randomized within valid bounds ensuring
+ * the player always has a passable opening.
+ */
+function generatePipe(canvasWidth, canvasHeight) {
+  const minGapTop = MIN_GAP_Y;
+  const maxGapTop = canvasHeight - PIPE_GAP - MAX_GAP_Y_OFFSET;
+  const gapTop = Math.random() * (maxGapTop - minGapTop) + minGapTop;
+  return {
+    x: canvasWidth,
+    gapTop: gapTop,
+    gapBottom: gapTop + PIPE_GAP,
+    width: PIPE_WIDTH,
+    scored: false
+  };
+}
+
+/**
+ * Moves a pipe leftward by PIPE_SPEED pixels.
+ * Returns a new pipe object with updated x position.
+ */
+function movePipe(pipe) {
+  return { ...pipe, x: pipe.x - PIPE_SPEED };
+}
+
+/**
+ * Checks whether a pipe has moved entirely off the left edge of the canvas.
+ */
+function isOffScreen(pipe) {
+  return pipe.x + pipe.width < 0;
+}
+
+/**
+ * Filters out pipes that have moved off-screen.
+ * Returns a new array containing only visible pipes.
+ */
+function removeOffScreenPipes(pipes) {
+  return pipes.filter(pipe => !isOffScreen(pipe));
+}
