@@ -231,3 +231,99 @@ function checkCollision(playerRect, pipes, canvasHeight, isInvincible) {
   }
   return false;
 }
+
+// === Data Packet System ===
+
+/**
+ * Spawns a data packet at a random vertical position within a pipe's gap.
+ * The packet center is constrained so the full circle stays inside the gap bounds.
+ * Returns a new data packet object positioned at the pipe's horizontal center.
+ */
+function spawnDataPacket(pipe) {
+  const minY = pipe.gapTop + DATA_PACKET_RADIUS;
+  const maxY = pipe.gapBottom - DATA_PACKET_RADIUS;
+  const y = Math.random() * (maxY - minY) + minY;
+  return {
+    x: pipe.x + pipe.width / 2,
+    y: y,
+    radius: DATA_PACKET_RADIUS,
+    collected: false
+  };
+}
+
+/**
+ * Moves a data packet leftward at the same speed as pipes.
+ * Returns a new packet object with updated x position.
+ */
+function moveDataPacket(packet) {
+  return { ...packet, x: packet.x - PIPE_SPEED };
+}
+
+/**
+ * Circle-rect collision detection between a player rectangle and a data packet.
+ * Finds the closest point on the rectangle to the circle center,
+ * then checks if the distance is within the circle's radius.
+ */
+function checkDataPacketCollision(playerRect, packet) {
+  const closestX = Math.max(playerRect.x, Math.min(packet.x, playerRect.x + playerRect.width));
+  const closestY = Math.max(playerRect.y, Math.min(packet.y, playerRect.y + playerRect.height));
+  const distX = packet.x - closestX;
+  const distY = packet.y - closestY;
+  return (distX * distX + distY * distY) <= (packet.radius * packet.radius);
+}
+
+/**
+ * Partitions packets into collected and remaining based on player overlap.
+ * Returns an object with two arrays: collected packets and remaining active packets.
+ */
+function collectDataPackets(playerRect, packets) {
+  const collected = [];
+  const remaining = [];
+  for (const packet of packets) {
+    if (checkDataPacketCollision(playerRect, packet)) {
+      collected.push(packet);
+    } else {
+      remaining.push(packet);
+    }
+  }
+  return { collected, remaining };
+}
+
+/**
+ * Removes data packets that have moved entirely off the left edge of the canvas.
+ * A packet is off-screen when its rightmost point (x + radius) is at or below 0.
+ */
+function removeOffScreenDataPackets(packets) {
+  return packets.filter(p => p.x + p.radius > 0);
+}
+
+// === Steering Charge Manager ===
+
+/**
+ * Adds steering charge based on the number of data packets collected.
+ * Each packet adds CHARGE_PER_PACKET (25%) to the current charge.
+ * The result is capped at MAX_CHARGE (100%).
+ */
+function addSteeringCharge(currentCharge, packetsCollected) {
+  const added = currentCharge + (packetsCollected * CHARGE_PER_PACKET);
+  return Math.min(added, MAX_CHARGE);
+}
+
+/**
+ * Checks whether Steering Mode can be activated.
+ * Requires full charge (100%) and Steering Mode not already active.
+ */
+function canActivateSteering(charge, steeringModeActive) {
+  return charge >= MAX_CHARGE && !steeringModeActive;
+}
+
+/**
+ * Updates the HTML steering charge progress bar width to reflect current charge.
+ * Skips update gracefully if the bar element is not found in the DOM.
+ */
+function updateChargeBar(charge) {
+  const bar = document.getElementById('steering-charge-bar');
+  if (bar) {
+    bar.style.width = `${charge}%`;
+  }
+}
