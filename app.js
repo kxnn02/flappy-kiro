@@ -133,3 +133,101 @@ function isOffScreen(pipe) {
 function removeOffScreenPipes(pipes) {
   return pipes.filter(pipe => !isOffScreen(pipe));
 }
+
+// === Scoring System ===
+
+/**
+ * Checks if the player has passed a pipe's trailing edge.
+ * Returns true if the pipe hasn't been scored yet and the player
+ * has moved past the pipe's right edge (x + width).
+ */
+function shouldIncrementScore(playerX, pipe) {
+  return !pipe.scored && playerX > pipe.x + pipe.width;
+}
+
+/**
+ * Formats the current score and high score into a display string.
+ * Returns "Score: X | High: Y" format.
+ */
+function formatScore(score, highScore) {
+  return `Score: ${score} | High: ${highScore}`;
+}
+
+/**
+ * Loads the high score from localStorage.
+ * Returns 0 if no high score is stored or localStorage is unavailable.
+ */
+function loadHighScore() {
+  return parseInt(localStorage.getItem(HIGH_SCORE_KEY)) || 0;
+}
+
+/**
+ * Saves the high score to localStorage if the current score exceeds it.
+ * Returns the new high score (either the current score or the existing high score).
+ */
+function saveHighScore(score, currentHighScore) {
+  if (score > currentHighScore) {
+    localStorage.setItem(HIGH_SCORE_KEY, score.toString());
+    return score;
+  }
+  return currentHighScore;
+}
+
+// === Collision Detection ===
+
+/**
+ * Constructs the player's hitbox rectangle with inward padding for fairness.
+ * The padding shrinks the collision rect so near-misses don't feel unfair.
+ */
+function getPlayerRect(player, spriteWidth, spriteHeight) {
+  const padding = 4;
+  return {
+    x: player.x + padding,
+    y: player.y + padding,
+    width: spriteWidth - padding * 2,
+    height: spriteHeight - padding * 2
+  };
+}
+
+/**
+ * Axis-aligned bounding box overlap check.
+ * Returns true if rectangles a and b intersect.
+ */
+function rectsOverlap(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+/**
+ * Checks if the player has hit the ceiling (y <= 0) or ground (y + height >= canvasHeight).
+ * Boundary collisions remain active even during Steering Mode.
+ */
+function checkBoundaryCollision(playerY, playerHeight, canvasHeight) {
+  return playerY <= 0 || playerY + playerHeight >= canvasHeight;
+}
+
+/**
+ * Full collision check combining boundary and pipe collision.
+ * Boundary collisions are always enforced.
+ * Pipe collisions are skipped when the player is invincible (Steering Mode).
+ */
+function checkCollision(playerRect, pipes, canvasHeight, isInvincible) {
+  if (checkBoundaryCollision(playerRect.y, playerRect.height, canvasHeight)) {
+    return true;
+  }
+  if (isInvincible) {
+    return false;
+  }
+  for (const pipe of pipes) {
+    const topPipeRect = { x: pipe.x, y: 0, width: pipe.width, height: pipe.gapTop };
+    const bottomPipeRect = { x: pipe.x, y: pipe.gapBottom, width: pipe.width, height: canvasHeight - pipe.gapBottom };
+    if (rectsOverlap(playerRect, topPipeRect) || rectsOverlap(playerRect, bottomPipeRect)) {
+      return true;
+    }
+  }
+  return false;
+}
