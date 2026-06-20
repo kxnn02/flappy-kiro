@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Flappy Kiro</title>
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,7 +13,7 @@
       <div id="steering-charge-bar"></div>
     </div>
 
-    <canvas id="game-canvas"></canvas>
+    <canvas id="game-canvas" role="img" aria-label="Flappy Kiro game: waiting to start" aria-live="polite"></canvas>
 
     <!-- Start screen overlay for fade transitions -->
     <div id="start-overlay">
@@ -32,13 +33,26 @@
       <p id="death-recap-highscore">High Score: 0</p>
       <p id="death-recap-new-high" class="new-high-score" style="display: none;">NEW HIGH SCORE</p>
       <p id="death-recap-countdown">Restarting in 3...</p>
-      <p id="death-recap-restart" style="display: none;">Press Space or Tap to Restart</p>
+      <button id="death-recap-restart" aria-label="Restart game" style="display: none;">Press Space or Tap to Restart</button>
+    </div>
+
+    <!-- Leaderboard overlay -->
+    <div id="leaderboard-overlay" style="display: none;">
+      <h2>Leaderboard</h2>
+      <div id="leaderboard-list"></div>
+      <div id="leaderboard-error" style="display: none;"></div>
+      <div id="leaderboard-name-prompt" style="display: none;">
+        <label for="leaderboard-name-input">Display Name:</label>
+        <input id="leaderboard-name-input" type="text" maxlength="15" placeholder="3-15 alphanumeric">
+        <button id="leaderboard-name-submit">Submit</button>
+      </div>
+      <button id="leaderboard-close">Close</button>
     </div>
 
     <!-- Score popup container for floating "+1" elements -->
     <div id="score-popup-container"></div>
 
-    <button id="steering-activate-btn" style="display: none;">Activate Steering</button>
+    <button id="steering-activate-btn" aria-label="Activate steering mode" style="display: none;">Activate Steering</button>
   </div>
 
   <script defer src="app.js"></script>

@@ -225,3 +225,187 @@ body {
   letter-spacing: 4px;
   text-transform: uppercase;
 }
+
+/* === Leaderboard Overlay === */
+#leaderboard-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  font-family: monospace;
+  color: #e0e0e0;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+#leaderboard-overlay h2 {
+  margin: 0 0 12px 0;
+  font-size: 24px;
+  color: #a855f7;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+#leaderboard-list {
+  width: 100%;
+  max-width: 300px;
+  margin-bottom: 12px;
+}
+
+.leaderboard-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.leaderboard-row:first-child {
+  color: #facc15;
+  font-weight: bold;
+}
+
+.leaderboard-rank {
+  width: 24px;
+  text-align: right;
+  margin-right: 8px;
+}
+
+.leaderboard-name {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-score {
+  width: 60px;
+  text-align: right;
+}
+
+#leaderboard-error {
+  color: #f87171;
+  font-size: 13px;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+#leaderboard-name-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#leaderboard-name-prompt label {
+  font-size: 13px;
+  color: #a855f7;
+}
+
+#leaderboard-name-input {
+  background: #0d0d1a;
+  border: 1px solid #a855f7;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-family: monospace;
+  font-size: 14px;
+  padding: 6px 10px;
+  width: 180px;
+  text-align: center;
+}
+
+#leaderboard-name-input:focus {
+  outline: 2px solid #a855f7;
+  outline-offset: 1px;
+}
+
+#leaderboard-name-submit {
+  background: #1a1a2e;
+  border: 1px solid #a855f7;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-family: monospace;
+  font-size: 13px;
+  padding: 6px 16px;
+  cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+#leaderboard-name-submit:hover {
+  background: #2d1b4e;
+}
+
+#leaderboard-name-submit:focus {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+#leaderboard-close {
+  background: none;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-family: monospace;
+  font-size: 14px;
+  padding: 6px 20px;
+  cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+  margin-top: 8px;
+}
+
+#leaderboard-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+#leaderboard-close:focus {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+/* === Death Recap Restart Button === */
+#death-recap-restart {
+  background: none;
+  border: none;
+  font-family: monospace;
+  font-size: 16px;
+  color: #e0e0e0;
+  cursor: pointer;
+  padding: 8px 16px;
+  margin: 4px 0;
+  pointer-events: auto;
+}
+
+#death-recap-restart:focus {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+/* === Focus Indicator for Steering Button === */
+#steering-activate-btn:focus {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+
+/* === Reduced Motion Accessibility === */
+@media (prefers-reduced-motion: reduce) {
+  #start-overlay,
+  #pause-overlay,
+  #death-recap-overlay {
+    transition: none !important;
+  }
+
+  .score-popup {
+    animation: none !important;
+  }
+}
