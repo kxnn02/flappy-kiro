@@ -1,8 +1,6 @@
 # Flappy Kiro
 
-![Flappy Kiro Gameplay](img/example-ui.png)
-
-A Flappy Bird-style browser game featuring Ghosty, a neon-purple spirit navigating through pipes in a dark retro world. Collect Data Packets to charge Steering Mode, grab power-ups like Shield, Slow-Motion, and Magnet, and compete on the online leaderboard. Built with vanilla JavaScript, HTML5 Canvas, and Web Audio API.
+A Flappy Bird-style browser game featuring Ghosty, a neon-purple spirit navigating through pipes in a dark retro world. Collect Data Packets to charge Steering Mode, grab power-ups like Shield and Magnet, and chase your high score. Built with vanilla JavaScript, HTML5 Canvas, and Web Audio API.
 
 ## Controls
 
@@ -20,7 +18,8 @@ A Flappy Bird-style browser game featuring Ghosty, a neon-purple spirit navigati
 - **Themed Worlds** — 4 color themes that cycle every 50 points with fade transitions
 - **Trail Effect** — Purple trailing circles behind Ghosty during flight
 - **Pipe Color Gradient** — Pipes shift from green to red as speed increases
-- **Chiptune Music** — Procedurally generated pentatonic melody using Web Audio oscillators
+- **Ambient Lo-Fi Music** — Procedurally generated warm chord pads using Web Audio oscillators
+- **Chiptune Music** — Pentatonic melody layer with bass line
 - **Death Animation** — Ghosty spins and falls with gravity before the recap screen
 - **Online Leaderboard** — Submit scores and view top 10 via Firebase
 - **Object Pooling** — Pre-allocated particle and pipe pools for zero-allocation gameplay
@@ -51,20 +50,20 @@ Then navigate to `http://localhost:3000` in your browser.
 
 The game is deployed to GitHub Pages via GitHub Actions. Every push to `main` triggers an automatic deployment.
 
-**Live URL:** [https://\<username\>.github.io/buildNights/](https://<username>.github.io/buildNights/)
+**Live URL:** [https://kxnn02.github.io/flappy-kiro/]
 
 ## Project Structure
 
 ```
 ├── index.html          # Game page with canvas and UI overlays
-├── style.css           # Styling for overlays and layout
+├── style.css           # Styling, palette, transitions, and glow effects
 ├── app.js              # All game logic (single-file architecture)
 ├── assets/             # Sprites and audio files
 │   ├── ghosty.png      # Ghosty sprite
 │   ├── jump.wav        # Flap sound effect
 │   └── game_over.wav   # Death sound effect
-└── img/
-    └── example-ui.png  # Gameplay screenshot
+├── tests/              # Property-based tests (vitest + fast-check)
+└── .kiro/specs/        # Feature specs and task plans
 ```
 
 ## License
