@@ -13,21 +13,21 @@
       <div id="steering-charge-bar"></div>
     </div>
 
-    <canvas id="game-canvas" role="img" aria-label="Flappy Kiro game: waiting to start" aria-live="polite"></canvas>
+    <canvas id="game-canvas" tabindex="0" role="img" aria-label="Flappy Kiro game: waiting to start" aria-live="polite"></canvas>
 
     <!-- Start screen overlay for fade transitions -->
-    <div id="start-overlay">
+    <div id="start-overlay" class="overlay-fade-in visible">
       <h1>Flappy Kiro</h1>
       <p>Press Space or Click to Start</p>
     </div>
 
     <!-- Pause overlay -->
-    <div id="pause-overlay" style="display: none;">
+    <div id="pause-overlay">
       <span class="overlay-title">PAUSED</span>
     </div>
 
     <!-- Death recap overlay -->
-    <div id="death-recap-overlay" style="display: none;">
+    <div id="death-recap-overlay" class="overlay-fade-in" style="display: none;">
       <span class="overlay-title">Game Over</span>
       <p id="death-recap-score">Score: 0</p>
       <p id="death-recap-highscore">High Score: 0</p>
@@ -36,23 +36,39 @@
       <button id="death-recap-restart" aria-label="Restart game" style="display: none;">Press Space or Tap to Restart</button>
     </div>
 
-    <!-- Leaderboard overlay -->
-    <div id="leaderboard-overlay" style="display: none;">
-      <h2>Leaderboard</h2>
-      <div id="leaderboard-list"></div>
-      <div id="leaderboard-error" style="display: none;"></div>
-      <div id="leaderboard-name-prompt" style="display: none;">
-        <label for="leaderboard-name-input">Display Name:</label>
-        <input id="leaderboard-name-input" type="text" maxlength="15" placeholder="3-15 alphanumeric">
-        <button id="leaderboard-name-submit">Submit</button>
-      </div>
-      <button id="leaderboard-close">Close</button>
-    </div>
+
+    <!-- Score display overlay (visible during PLAYING state) -->
+    <div id="score-overlay">0</div>
 
     <!-- Score popup container for floating "+1" elements -->
     <div id="score-popup-container"></div>
 
-    <button id="steering-activate-btn" aria-label="Activate steering mode" style="display: none;">Activate Steering</button>
+    <!-- Help button -->
+    <button id="help-btn" aria-label="Show power-up help">?</button>
+
+    <!-- Help overlay -->
+    <div id="help-overlay" style="display: none;">
+      <h2 id="help-overlay-title">Power-Ups</h2>
+      <ul id="help-overlay-list">
+        <li class="help-item">
+          <span class="help-icon help-icon-shield"></span>
+          <span class="help-name">Shield</span>
+          <span class="help-desc">Absorbs one pipe collision, lasting 5 seconds after collection.</span>
+        </li>
+        <li class="help-item">
+          <span class="help-icon help-icon-magnet"></span>
+          <span class="help-name">Magnet</span>
+          <span class="help-desc">Attracts nearby data packets within 150px for 6 seconds.</span>
+        </li>
+        <li class="help-item">
+          <span class="help-icon help-icon-steering"></span>
+          <span class="help-name">Phase Mode</span>
+          <span class="help-desc">Phase through pipes like a ghost for 5 seconds.</span>
+        </li>
+      </ul>
+    </div>
+
+    <button id="steering-activate-btn" aria-label="Activate phase mode" style="display: none;">Activate Phase</button>
   </div>
 
   <script defer src="app.js"></script>
