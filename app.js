@@ -70,6 +70,247 @@ const PADDING_HORIZONTAL = 16;
 const PADDING_VERTICAL = 16;
 const RESIZE_DEBOUNCE_MS = 100;
 
+// === Glow Pulse Constants ===
+
+const GLOW_PULSE_MIN_OPACITY = 0.6;
+const GLOW_PULSE_MAX_OPACITY = 1.0;
+const GLOW_PULSE_PERIOD_MS = 1000;
+const GLOW_REDUCED_MOTION_OPACITY = 0.7;
+
+/**
+ * Pure function: calculates glow opacity based on elapsed time.
+ * Uses sinusoidal oscillation between min and max opacity.
+ * Returns a static value when reducedMotion is true.
+ */
+function calculateGlowOpacity(elapsedMs, reducedMotion) {
+  if (reducedMotion) return GLOW_REDUCED_MOTION_OPACITY;
+  const phase = (elapsedMs % GLOW_PULSE_PERIOD_MS) / GLOW_PULSE_PERIOD_MS;
+  const sinValue = Math.sin(phase * 2 * Math.PI);
+  const normalized = (sinValue + 1) / 2; // [0, 1]
+  return GLOW_PULSE_MIN_OPACITY + normalized * (GLOW_PULSE_MAX_OPACITY - GLOW_PULSE_MIN_OPACITY);
+}
+
+// === Background Grid Constants ===
+
+const GRID_SPACING = 40;          // pixels between grid lines
+const GRID_SCROLL_SPEED = 0.5;    // pixels per frame
+
+// === Music Engine Constants ===
+
+const MUSIC_MASTER_GAIN = 0.12;
+const MUSIC_VOICES_MIN = 2;
+const MUSIC_VOICES_MAX = 4;
+const MUSIC_DETUNE_MIN = 2;    // cents
+const MUSIC_DETUNE_MAX = 8;    // cents
+const MUSIC_ATTACK_MS = 500;
+const MUSIC_RELEASE_MS = 800;
+const MUSIC_CHORD_DURATION_MIN = 3000; // ms
+const MUSIC_CHORD_DURATION_MAX = 6000; // ms
+const MUSIC_PAUSE_FADE_MS = 300;
+const MUSIC_GAMEOVER_FADE_MS = 500;
+
+// Chord voicings (frequencies in Hz) — warm minor/major7 voicings
+const CHORD_VOICINGS = [
+  [130.81, 164.81, 196.00, 246.94],  // C3 E3 G3 B3
+  [146.83, 174.61, 220.00, 261.63],  // D3 F3 A3 C4
+  [164.81, 196.00, 246.94, 311.13],  // E3 G3 B3 Eb4
+  [174.61, 220.00, 261.63, 329.63],  // F3 A3 C4 E4
+];
+
+/**
+ * Creates the music engine state object.
+ * Returns an object managing AudioContext, oscillators, and gain nodes.
+ */
+function createMusicEngine() {
+  return {
+    ctx: null,
+    masterGain: null,
+    oscillators: [],
+    currentChordIndex: 0,
+    chordTimer: null,
+    isPlaying: false
+  };
+}
+
+/**
+ * Initializes the AudioContext and master gain node.
+ * Must be called from a user gesture handler.
+ */
+function initMusicContext(engine) {
+  engine.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  engine.masterGain = engine.ctx.createGain();
+  engine.masterGain.gain.value = 0;
+  engine.masterGain.connect(engine.ctx.destination);
+}
+
+/**
+ * Generates a chord voicing configuration.
+ * Returns an array of { frequency, detune, waveType } objects.
+ * Voice count is between MUSIC_VOICES_MIN and MUSIC_VOICES_MAX.
+ */
+function generateChordVoices(chordFrequencies) {
+  const voiceCount = MUSIC_VOICES_MIN + Math.floor(
+    Math.random() * (MUSIC_VOICES_MAX - MUSIC_VOICES_MIN + 1)
+  );
+  const voices = [];
+  for (let i = 0; i < voiceCount; i++) {
+    const freq = chordFrequencies[i % chordFrequencies.length];
+    const detune = MUSIC_DETUNE_MIN + Math.random() * (MUSIC_DETUNE_MAX - MUSIC_DETUNE_MIN);
+    voices.push({
+      frequency: freq,
+      detune: detune,
+      waveType: i % 2 === 0 ? 'sine' : 'triangle'
+    });
+  }
+  return voices;
+}
+
+/**
+ * Pure function: validates that a chord voice configuration meets constraints.
+ * voiceCount in [MUSIC_VOICES_MIN, MUSIC_VOICES_MAX],
+ * each detune in [MUSIC_DETUNE_MIN, MUSIC_DETUNE_MAX].
+ */
+function validateChordVoices(voices) {
+  if (voices.length < MUSIC_VOICES_MIN || voices.length > MUSIC_VOICES_MAX) return false;
+  for (const v of voices) {
+    if (v.detune < MUSIC_DETUNE_MIN || v.detune > MUSIC_DETUNE_MAX) return false;
+  }
+  return true;
+}
+
+/**
+ * Calculates the next chord duration (ms).
+ * Returns a value between MUSIC_CHORD_DURATION_MIN and MUSIC_CHORD_DURATION_MAX.
+ */
+function getNextChordDuration() {
+  return MUSIC_CHORD_DURATION_MIN + Math.random() * (MUSIC_CHORD_DURATION_MAX - MUSIC_CHORD_DURATION_MIN);
+}
+
+/**
+ * Cycles to the next chord: applies release envelope to current oscillators,
+ * stops them after release, advances chord index, then starts the next chord.
+ */
+function cycleChord(engine) {
+  if (!engine.isPlaying || !engine.ctx) return;
+
+  const now = engine.ctx.currentTime;
+
+  // Apply release envelope to existing oscillators
+  for (const oscInfo of engine.oscillators) {
+    oscInfo.gainNode.gain.cancelScheduledValues(now);
+    oscInfo.gainNode.gain.setValueAtTime(oscInfo.gainNode.gain.value, now);
+    oscInfo.gainNode.gain.linearRampToValueAtTime(0, now + MUSIC_RELEASE_MS / 1000);
+    oscInfo.oscillator.stop(now + MUSIC_RELEASE_MS / 1000 + 0.05);
+  }
+
+  // Advance chord index
+  engine.currentChordIndex = (engine.currentChordIndex + 1) % CHORD_VOICINGS.length;
+
+  // After release completes, start the new chord
+  engine.chordTimer = setTimeout(() => {
+    if (!engine.isPlaying) return;
+    engine.oscillators = [];
+    playChord(engine);
+  }, MUSIC_RELEASE_MS);
+}
+
+/**
+ * Creates oscillators for the current chord, connects them through gain nodes,
+ * applies attack envelope, and schedules the next chord cycle.
+ */
+function playChord(engine) {
+  if (!engine.ctx || !engine.isPlaying) return;
+
+  const chordFrequencies = CHORD_VOICINGS[engine.currentChordIndex];
+  const voices = generateChordVoices(chordFrequencies);
+  const now = engine.ctx.currentTime;
+  const perVoiceGain = MUSIC_MASTER_GAIN / voices.length;
+
+  for (const voice of voices) {
+    const osc = engine.ctx.createOscillator();
+    osc.type = voice.waveType;
+    osc.frequency.setValueAtTime(voice.frequency, now);
+    osc.detune.setValueAtTime(voice.detune, now);
+
+    const gainNode = engine.ctx.createGain();
+    gainNode.gain.setValueAtTime(0, now);
+    // Attack envelope: ramp from 0 to per-voice level over MUSIC_ATTACK_MS
+    gainNode.gain.linearRampToValueAtTime(perVoiceGain, now + MUSIC_ATTACK_MS / 1000);
+
+    osc.connect(gainNode);
+    gainNode.connect(engine.masterGain);
+    osc.start(now);
+
+    engine.oscillators.push({ oscillator: osc, gainNode: gainNode });
+  }
+
+  // Ramp master gain to MUSIC_MASTER_GAIN
+  engine.masterGain.gain.cancelScheduledValues(now);
+  engine.masterGain.gain.setValueAtTime(engine.masterGain.gain.value, now);
+  engine.masterGain.gain.linearRampToValueAtTime(MUSIC_MASTER_GAIN, now + MUSIC_ATTACK_MS / 1000);
+
+  // Schedule next chord
+  const duration = getNextChordDuration();
+  engine.chordTimer = setTimeout(() => {
+    cycleChord(engine);
+  }, duration);
+}
+
+/**
+ * Starts the music engine: creates oscillators from chord voices,
+ * connects through gain nodes, and schedules chord cycling.
+ * Must be called after initMusicContext.
+ */
+function startMusic(engine) {
+  if (!engine.ctx || engine.isPlaying) return;
+  engine.isPlaying = true;
+  engine.oscillators = [];
+  playChord(engine);
+}
+
+/**
+ * Pauses the music by ramping master gain to 0 over 300ms.
+ * Oscillators keep running so resume can bring them back instantly.
+ */
+function pauseMusic(engine) {
+  if (!engine.ctx || !engine.isPlaying) return;
+  const now = engine.ctx.currentTime;
+  engine.masterGain.gain.cancelScheduledValues(now);
+  engine.masterGain.gain.setValueAtTime(engine.masterGain.gain.value, now);
+  engine.masterGain.gain.linearRampToValueAtTime(0, now + MUSIC_PAUSE_FADE_MS / 1000);
+}
+
+/**
+ * Resumes the music by ramping master gain back to MUSIC_MASTER_GAIN over 300ms.
+ */
+function resumeMusic(engine) {
+  if (!engine.ctx || !engine.isPlaying) return;
+  const now = engine.ctx.currentTime;
+  engine.masterGain.gain.cancelScheduledValues(now);
+  engine.masterGain.gain.setValueAtTime(engine.masterGain.gain.value, now);
+  engine.masterGain.gain.linearRampToValueAtTime(MUSIC_MASTER_GAIN, now + MUSIC_PAUSE_FADE_MS / 1000);
+}
+
+/**
+ * Stops the music: fades gain to 0 over 500ms, then stops all oscillators.
+ * Clears chord cycling timer.
+ */
+function stopMusic(engine) {
+  if (!engine.ctx) return;
+  engine.isPlaying = false;
+  if (engine.chordTimer) { clearTimeout(engine.chordTimer); engine.chordTimer = null; }
+  const now = engine.ctx.currentTime;
+  engine.masterGain.gain.cancelScheduledValues(now);
+  engine.masterGain.gain.setValueAtTime(engine.masterGain.gain.value, now);
+  engine.masterGain.gain.linearRampToValueAtTime(0, now + MUSIC_GAMEOVER_FADE_MS / 1000);
+  setTimeout(() => {
+    for (const oscInfo of engine.oscillators) {
+      try { oscInfo.oscillator.stop(); } catch (e) {}
+    }
+    engine.oscillators = [];
+  }, MUSIC_GAMEOVER_FADE_MS + 50);
+}
+
 // === Reduced Motion Preference ===
 
 let reducedMotionEnabled = false;
@@ -85,6 +326,50 @@ function checkReducedMotion() {
     reducedMotionEnabled = e.matches;
   });
   return reducedMotionEnabled;
+}
+
+// === Background Grid Functions ===
+
+/**
+ * Pure function: calculates the grid scroll offset for the current frame.
+ * Returns 0 when reduced motion is enabled, otherwise (frameCount * speed) mod spacing.
+ */
+function calculateGridOffset(frameCount, reducedMotion) {
+  if (reducedMotion) return 0;
+  return (frameCount * GRID_SCROLL_SPEED) % GRID_SPACING;
+}
+
+/**
+ * Renders the canvas background: vertical gradient + scrolling grid.
+ * Receives pre-calculated gridOffset so rendering remains pure of state.
+ */
+function renderBackground(ctx, canvasWidth, canvasHeight, gridOffset) {
+  // Vertical gradient
+  const gradient = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+  gradient.addColorStop(0, '#0f0f23');
+  gradient.addColorStop(1, '#1a0a2e');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(179, 102, 255, 0.04)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+
+  // Vertical lines (static)
+  for (let x = 0; x < canvasWidth; x += GRID_SPACING) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvasHeight);
+  }
+
+  // Horizontal lines (scrolling)
+  const startY = (gridOffset % GRID_SPACING) - GRID_SPACING;
+  for (let y = startY; y < canvasHeight; y += GRID_SPACING) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvasWidth, y);
+  }
+
+  ctx.stroke();
 }
 
 // === Shield Power-Up Constants ===
@@ -107,19 +392,13 @@ const CAP_HEIGHT = 20;                  // height of pipe cap rectangle
 const SHAKE_DURATION = 300;             // milliseconds
 const SHAKE_INTENSITY = 5;              // max pixel offset in any direction
 
-// === Steering Mode Constants ===
+// === Phase Mode Constants ===
 
 const CHARGE_PER_PACKET = 25;           // percentage per Data Packet
 const MAX_CHARGE = 100;                 // percentage cap
 const STEERING_MODE_DURATION = 5000;    // milliseconds
 
-// === Slow-Motion Power-Up Constants ===
 
-const SLOW_MOTION_RADIUS = 12;
-const SLOW_MOTION_SPAWN_CHANCE = 0.08;
-const SLOW_MOTION_DURATION = 4000;       // ms
-const SLOW_MOTION_MULTIPLIER = 0.5;
-const SLOW_MOTION_RAMP_DURATION = 500;   // ms linear ramp-up on expiry
 
 // === Magnet Power-Up Constants ===
 
@@ -133,7 +412,7 @@ const MAGNET_ATTRACT_SPEED = 3;          // px/frame at 60fps, scaled by dt
 
 const TRAIL_BUFFER_SIZE = 12;
 const TRAIL_SAMPLE_INTERVAL = 2;   // frames between samples
-const TRAIL_COLOR = '#a855f7';
+const TRAIL_COLOR = '#b366ff';
 
 // === Grace Period Constants ===
 
@@ -156,7 +435,7 @@ const WORLD_THEMES = [
   { pipe: '#00d400', accent: '#2d5a27', particle: '#00ff88' },   // Forest
   { pipe: '#0088ff', accent: '#1a3a5e', particle: '#00ccff' },   // Ocean
   { pipe: '#ff4400', accent: '#5e1a1a', particle: '#ff8800' },   // Volcano
-  { pipe: '#a855f7', accent: '#2e1065', particle: '#e879f9' }    // Space
+  { pipe: '#b366ff', accent: '#2e1065', particle: '#e879f9' }    // Space
 ];
 
 // === Pipe Color Gradient Constants ===
@@ -169,6 +448,7 @@ const PIPE_COLOR_END = { r: 212, g: 0, b: 0 };       // #d40000 red
 const DEATH_ANIM_DURATION = 800;         // ms total animation time
 const DEATH_SPIN_RATE = 360;             // degrees per second (clockwise)
 const DEATH_RECAP_FADE_IN = 400;         // ms for death recap overlay fade-in
+const DEATH_RED_TINT_DURATION = 200;     // ms red tint flash before spin-and-fall
 
 // === Storage Constants ===
 
@@ -194,15 +474,12 @@ function applyFlap() {
 
 /**
  * Applies gravity to the player and updates vertical position.
- * Returns a new player object with updated velocity and y.
+ * Mutates the player object in-place (zero allocation).
  */
 function updatePlayerPosition(player) {
   const newVelocity = applyGravity(player.velocity);
-  return {
-    ...player,
-    velocity: newVelocity,
-    y: player.y + newVelocity
-  };
+  player.velocity = newVelocity;
+  player.y = player.y + newVelocity;
 }
 
 // === Pipe System ===
@@ -229,10 +506,10 @@ function generatePipe(canvasWidth, canvasHeight, pipeGap) {
 
 /**
  * Moves a pipe leftward by PIPE_SPEED pixels.
- * Returns a new pipe object with updated x position.
+ * Mutates the pipe object in-place (zero allocation).
  */
 function movePipe(pipe) {
-  return { ...pipe, x: pipe.x - PIPE_SPEED };
+  pipe.x -= PIPE_SPEED;
 }
 
 /**
@@ -409,10 +686,10 @@ function spawnDataPacket(pipe) {
 
 /**
  * Moves a data packet leftward at the same speed as pipes.
- * Returns a new packet object with updated x position.
+ * Mutates the packet object in-place (zero allocation).
  */
 function moveDataPacket(packet) {
-  return { ...packet, x: packet.x - PIPE_SPEED };
+  packet.x -= PIPE_SPEED;
 }
 
 /**
@@ -480,10 +757,10 @@ function spawnShieldPickup(pipe) {
 
 /**
  * Moves a shield pickup leftward at the given speed scaled by delta time.
- * Returns a new pickup object with updated x position.
+ * Mutates the pickup object in-place (zero allocation).
  */
 function moveShieldPickup(pickup, speed, dt) {
-  return { ...pickup, x: pickup.x - speed };
+  pickup.x -= speed;
 }
 
 /**
@@ -513,11 +790,9 @@ function checkShieldPickupCollision(playerRect, pickup) {
  * Returns the updated game context.
  */
 function activateShield(gameContext) {
-  return {
-    ...gameContext,
-    shieldActive: true,
-    shieldTimer: SHIELD_DURATION
-  };
+  gameContext.shieldActive = true;
+  gameContext.shieldTimer = SHIELD_DURATION;
+  return gameContext;
 }
 
 /**
@@ -560,10 +835,10 @@ function spawnMagnetPickup(pipe) {
 
 /**
  * Moves a magnet pickup leftward at the given speed (already scaled by dt externally).
- * Returns a new pickup object with updated x position.
+ * Mutates the pickup object in-place (zero allocation).
  */
 function moveMagnetPickup(pickup, speed, dt) {
-  return { ...pickup, x: pickup.x - speed };
+  pickup.x -= speed;
 }
 
 /**
@@ -711,11 +986,9 @@ function checkMagnetPickupCollision(playerRect, pickup) {
  * stacking effects.
  */
 function activateMagnet(gameContext) {
-  return {
-    ...gameContext,
-    magnetActive: true,
-    magnetTimer: MAGNET_DURATION
-  };
+  gameContext.magnetActive = true;
+  gameContext.magnetTimer = MAGNET_DURATION;
+  return gameContext;
 }
 
 /**
@@ -765,7 +1038,7 @@ function renderMagnetActiveEffect(ctx, player, scaleFactor, deltaMs) {
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.strokeStyle = '#a855f7';
+  ctx.strokeStyle = '#b366ff';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -773,147 +1046,7 @@ function renderMagnetActiveEffect(ctx, player, scaleFactor, deltaMs) {
   ctx.restore();
 }
 
-// === Slow-Motion Pickup System ===
 
-/**
- * Attempts to spawn a slow-motion pickup within the pipe gap.
- * Returns a pickup object { x, y, radius } with 8% probability,
- * or null if the random check fails or the gap is too small.
- * The pickup center is constrained so the full circle stays within the gap.
- */
-function spawnSlowMotionPickup(pipe) {
-  if (Math.random() >= SLOW_MOTION_SPAWN_CHANCE) {
-    return null;
-  }
-  const gapSize = pipe.gapBottom - pipe.gapTop;
-  if (gapSize < SLOW_MOTION_RADIUS * 2) {
-    return null;
-  }
-  const minY = pipe.gapTop + SLOW_MOTION_RADIUS;
-  const maxY = pipe.gapBottom - SLOW_MOTION_RADIUS;
-  const y = Math.random() * (maxY - minY) + minY;
-  return {
-    x: pipe.x + pipe.width / 2,
-    y: y,
-    radius: SLOW_MOTION_RADIUS
-  };
-}
-
-/**
- * Moves a slow-motion pickup leftward at the given speed.
- * Speed is already in pixels/frame (pre-scaled by caller).
- * Returns a new pickup object with updated x position.
- */
-function moveSlowMotionPickup(pickup, speed) {
-  return { ...pickup, x: pickup.x - speed };
-}
-
-/**
- * Renders a slow-motion pickup as a glowing yellow circle with a clock icon.
- * Uses Canvas arc primitives with shadowColor/shadowBlur for glow effect.
- * Does NOT mutate state.
- */
-function renderSlowMotionPickup(ctx, pickup) {
-  ctx.save();
-
-  // Glowing yellow circle
-  ctx.beginPath();
-  ctx.arc(pickup.x, pickup.y, pickup.radius, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255, 221, 0, 0.8)';
-  ctx.shadowColor = '#ffdd00';
-  ctx.shadowBlur = 10;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.closePath();
-
-  // Clock icon: circle outline with two hands
-  const cx = pickup.x;
-  const cy = pickup.y;
-  const iconScale = pickup.radius / 12;
-
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.5 * iconScale;
-
-  // Clock face outline
-  ctx.beginPath();
-  ctx.arc(cx, cy, 5 * iconScale, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Hour hand (pointing up-right)
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + 2 * iconScale, cy - 3 * iconScale);
-  ctx.stroke();
-
-  // Minute hand (pointing up)
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(cx, cy - 4 * iconScale);
-  ctx.stroke();
-
-  ctx.restore();
-}
-
-/**
- * Circle-rect collision detection between a player rectangle and a slow-motion pickup.
- * Finds the closest point on the rectangle to the circle center,
- * then checks if the distance is within the circle's radius.
- */
-function checkSlowMotionPickupCollision(playerRect, pickup) {
-  const closestX = Math.max(playerRect.x, Math.min(pickup.x, playerRect.x + playerRect.width));
-  const closestY = Math.max(playerRect.y, Math.min(pickup.y, playerRect.y + playerRect.height));
-  const distX = pickup.x - closestX;
-  const distY = pickup.y - closestY;
-  return (distX * distX + distY * distY) <= (pickup.radius * pickup.radius);
-}
-
-/**
- * Activates Slow-Motion effect by setting the active flag and initializing
- * the 4-second duration timer. If already active, resets the timer without
- * compounding the speed reduction.
- */
-function activateSlowMotion(gameContext) {
-  return {
-    ...gameContext,
-    slowMotionActive: true,
-    slowMotionTimer: SLOW_MOTION_DURATION,
-    slowMotionRampTimer: 0
-  };
-}
-
-/**
- * Returns the effective speed multiplier for slow-motion.
- * - If slow-motion is active: returns SLOW_MOTION_MULTIPLIER (0.5)
- * - If ramp timer is active (expiry ramp-up): linearly interpolates from 0.5 to 1.0
- * - Otherwise: returns 1.0 (normal speed)
- */
-function getEffectiveSpeedMultiplier(gameContext) {
-  if (gameContext.slowMotionActive) {
-    return SLOW_MOTION_MULTIPLIER;
-  }
-  if (gameContext.slowMotionRampTimer > 0) {
-    const elapsed = SLOW_MOTION_RAMP_DURATION - gameContext.slowMotionRampTimer;
-    return SLOW_MOTION_MULTIPLIER + (1 - SLOW_MOTION_MULTIPLIER) * (elapsed / SLOW_MOTION_RAMP_DURATION);
-  }
-  return 1.0;
-}
-
-/**
- * Renders a yellow-tinted border overlay (4px inset strokeRect, 40% opacity)
- * while slow-motion is active or the ramp-up period is in progress.
- * Does NOT mutate game state.
- */
-function renderSlowMotionOverlay(ctx, canvasWidth, canvasHeight, gameContext) {
-  if (!gameContext.slowMotionActive && gameContext.slowMotionRampTimer <= 0) {
-    return;
-  }
-  ctx.save();
-  ctx.globalAlpha = 0.4;
-  ctx.strokeStyle = '#ffdd00';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, canvasWidth - 4, canvasHeight - 4);
-  ctx.restore();
-}
 
 // === Day/Night Cycle System ===
 
@@ -1115,40 +1248,57 @@ function canActivateSteering(charge, steeringModeActive) {
 
 /**
  * Updates the HTML steering charge progress bar width to reflect current charge.
+ * Applies charge-pulse animation class when charge reaches 100%.
+ * Removes pulse class when charge drops below 100%.
  * Skips update gracefully if the bar element is not found in the DOM.
  */
 function updateChargeBar(charge) {
-  const bar = document.getElementById('steering-charge-bar');
+  const bar = domCache.steeringChargeBar;
   if (bar) {
     bar.style.width = `${charge}%`;
+    if (charge >= MAX_CHARGE) {
+      if (!bar.classList.contains('charge-pulse')) {
+        bar.classList.add('charge-pulse');
+      }
+    } else {
+      bar.classList.remove('charge-pulse');
+    }
+  }
+  // Add/remove charge-full class on the container for pulse animation
+  const container = domCache.steeringChargeContainer;
+  if (container) {
+    if (charge >= MAX_CHARGE) {
+      if (!container.classList.contains('charge-full')) {
+        container.classList.add('charge-full');
+      }
+    } else {
+      container.classList.remove('charge-full');
+    }
   }
 }
 
-// === Steering Mode Controller ===
+// === Phase Mode Controller ===
 
 /**
- * Activates Steering Mode by setting the active flag and initializing
- * the 5-second duration timer. Returns a new game context with steering active.
+ * Activates Phase Mode by setting the active flag and initializing
+ * the 5-second duration timer. Player keeps manual control but
+ * becomes invincible to pipe collisions (phases through like a ghost).
  */
 function activateSteeringMode(gameContext) {
-  return {
-    ...gameContext,
-    steeringModeActive: true,
-    steeringModeTimer: STEERING_MODE_DURATION
-  };
+  gameContext.steeringModeActive = true;
+  gameContext.steeringModeTimer = STEERING_MODE_DURATION;
+  return gameContext;
 }
 
 /**
- * Deactivates Steering Mode, restoring normal gameplay state.
+ * Deactivates Phase Mode, restoring normal gameplay state.
  * Clears the active flag, resets the timer, and zeroes the charge meter.
  */
 function deactivateSteeringMode(gameContext) {
-  return {
-    ...gameContext,
-    steeringModeActive: false,
-    steeringModeTimer: 0,
-    steeringCharge: 0
-  };
+  gameContext.steeringModeActive = false;
+  gameContext.steeringModeTimer = 0;
+  gameContext.steeringCharge = 0;
+  return gameContext;
 }
 
 /**
@@ -1179,11 +1329,9 @@ function updateSteeringMode(gameContext, deltaMs) {
     return deactivateSteeringMode(gameContext);
   }
 
-  return {
-    ...gameContext,
-    steeringModeTimer: newTimer,
-    steeringCharge: newCharge
-  };
+  gameContext.steeringModeTimer = newTimer;
+  gameContext.steeringCharge = newCharge;
+  return gameContext;
 }
 
 // === Difficulty Manager ===
@@ -1229,9 +1377,14 @@ function updateScreenShake(shakeState, dt) {
   }
   const newTimer = shakeState.timer - dt;
   if (newTimer <= 0) {
-    return { active: false, timer: 0, offsetX: 0, offsetY: 0 };
+    shakeState.active = false;
+    shakeState.timer = 0;
+    shakeState.offsetX = 0;
+    shakeState.offsetY = 0;
+    return shakeState;
   }
-  return { ...shakeState, timer: newTimer };
+  shakeState.timer = newTimer;
+  return shakeState;
 }
 
 /**
@@ -1269,9 +1422,12 @@ function updateGracePeriod(graceState, dt) {
   }
   const newTimer = graceState.timer - dt;
   if (newTimer <= 0) {
-    return { active: false, timer: 0 };
+    graceState.active = false;
+    graceState.timer = 0;
+    return graceState;
   }
-  return { ...graceState, timer: newTimer };
+  graceState.timer = newTimer;
+  return graceState;
 }
 
 /**
@@ -1314,33 +1470,31 @@ function initThemeSystem() {
  * Checks if score has crossed a 50-point threshold. If so, advances the theme index
  * (wrapping around). Handles multi-step score jumps by advancing to the correct theme.
  * Manages the 300ms transition timer for the white fade overlay.
- * Pure function: returns a new state object.
+ * Mutates state in-place (zero allocation).
  */
 function updateThemeSystem(state, score, deltaMs) {
-  let newState = { ...state };
-
   // Compute which theme index we should be at based on score
   const targetIndex = Math.floor(score / THEME_INTERVAL) % WORLD_THEMES.length;
   const currentThreshold = Math.floor(score / THEME_INTERVAL) * THEME_INTERVAL;
 
   // Check if we crossed a new threshold (score advanced past a multiple of 50)
   if (currentThreshold > state.lastScoreThreshold && score > 0) {
-    newState.currentIndex = targetIndex;
-    newState.lastScoreThreshold = currentThreshold;
-    newState.transitioning = true;
-    newState.transitionTimer = THEME_TRANSITION_DURATION;
+    state.currentIndex = targetIndex;
+    state.lastScoreThreshold = currentThreshold;
+    state.transitioning = true;
+    state.transitionTimer = THEME_TRANSITION_DURATION;
   }
 
   // Decrement transition timer
-  if (newState.transitioning) {
-    newState.transitionTimer -= deltaMs;
-    if (newState.transitionTimer <= 0) {
-      newState.transitionTimer = 0;
-      newState.transitioning = false;
+  if (state.transitioning) {
+    state.transitionTimer -= deltaMs;
+    if (state.transitionTimer <= 0) {
+      state.transitionTimer = 0;
+      state.transitioning = false;
     }
   }
 
-  return newState;
+  return state;
 }
 
 /**
@@ -1394,36 +1548,6 @@ function renderRotatedSprite(ctx, image, x, y, width, height, angleDeg) {
   ctx.restore();
 }
 
-// === Autopilot Behavior ===
-
-/**
- * Calculates the autopilot velocity to guide the player toward the center
- * of the next upcoming pipe gap. Uses proportional control with a capped
- * max speed for smooth navigation.
- *
- * Returns 0 if no pipe is ahead (maintain current position).
- * The velocity is clamped to [-maxSpeed, maxSpeed] for smooth movement.
- */
-function calculateAutopilotVelocity(playerY, playerHeight, pipes, playerX, timeRemainingMs) {
-  const nextPipe = pipes.find(p => p.x + p.width > playerX);
-  if (!nextPipe) {
-    return 0;
-  }
-  const gapCenter = (nextPipe.gapTop + nextPipe.gapBottom) / 2;
-  const playerCenter = playerY + playerHeight / 2;
-  const diff = gapCenter - playerCenter;
-  const maxSpeed = 6;
-  let velocity = Math.max(-maxSpeed, Math.min(maxSpeed, diff * 0.15));
-
-  // Ease off velocity in the last 800ms to prevent post-steering collision
-  if (timeRemainingMs < 800) {
-    const easeFactor = timeRemainingMs / 800;
-    velocity *= easeFactor;
-  }
-
-  return velocity;
-}
-
 // === Particle System ===
 
 // Particle Constants
@@ -1431,7 +1555,7 @@ const PARTICLE_MIN_RADIUS = 2;
 const PARTICLE_MAX_RADIUS = 4;
 const PARTICLE_MIN_LIFE = 400;    // milliseconds
 const PARTICLE_MAX_LIFE = 600;    // milliseconds
-const PARTICLE_COLOR = '#a020f0'; // purple matching Data Packet aesthetic
+const PARTICLE_COLOR = '#b366ff'; // accent-primary matching palette
 const PARTICLE_SPEED = 80;        // base speed in px/s
 
 /**
@@ -1514,10 +1638,57 @@ function renderParticles(ctx, particles) {
 
 // === Object Pool Constants ===
 
-const PARTICLE_POOL_SIZE = 100;
+const PARTICLE_POOL_SIZE = 30;
 const PIPE_POOL_SIZE = 10;
 
 // === Object Pool System ===
+
+/**
+ * Creates a generic object pool with pre-allocated slots.
+ * @param {number} size - Number of slots to pre-allocate
+ * @param {function} factory - Factory function that returns a new default object for a slot
+ * @returns {{ items: Array, activeFlags: Array<boolean>, activeCount: number }}
+ */
+function createPool(size, factory) {
+  const items = [];
+  const activeFlags = [];
+  for (let i = 0; i < size; i++) {
+    items.push(factory());
+    activeFlags.push(false);
+  }
+  return { items, activeFlags, activeCount: 0 };
+}
+
+/**
+ * Acquires an inactive slot from the pool and marks it active.
+ * Returns the index of the acquired slot, or -1 if pool is exhausted.
+ * @param {Object} pool - Pool created by createPool
+ * @returns {number} Index of the acquired slot, or -1 if none available
+ */
+function acquireFromPool(pool) {
+  for (let i = 0; i < pool.items.length; i++) {
+    if (!pool.activeFlags[i]) {
+      pool.activeFlags[i] = true;
+      pool.activeCount++;
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Releases a slot back to the pool by index, marking it inactive for reuse.
+ * @param {Object} pool - Pool created by createPool
+ * @param {number} index - Index of the slot to release
+ */
+function releaseToPool(pool, index) {
+  if (pool.activeFlags[index]) {
+    pool.activeFlags[index] = false;
+    pool.activeCount--;
+  }
+}
+
+// === Particle Pool (specialized) ===
 
 /**
  * Creates a particle pool with pre-allocated particle objects.
@@ -1525,10 +1696,8 @@ const PIPE_POOL_SIZE = 10;
  * Returns a pool object with items, activeFlags, and activeCount.
  */
 function createParticlePool(size) {
-  const items = [];
-  const activeFlags = [];
-  for (let i = 0; i < size; i++) {
-    items.push({
+  return createPool(size, function () {
+    return {
       x: 0,
       y: 0,
       vx: 0,
@@ -1538,10 +1707,8 @@ function createParticlePool(size) {
       alpha: 0,
       life: 0,
       maxLife: 0
-    });
-    activeFlags.push(false);
-  }
-  return { items, activeFlags, activeCount: 0 };
+    };
+  });
 }
 
 /**
@@ -1550,14 +1717,9 @@ function createParticlePool(size) {
  * Marks the acquired particle as active.
  */
 function acquireParticle(pool) {
-  for (let i = 0; i < pool.items.length; i++) {
-    if (!pool.activeFlags[i]) {
-      pool.activeFlags[i] = true;
-      pool.activeCount++;
-      return pool.items[i];
-    }
-  }
-  return null;
+  const idx = acquireFromPool(pool);
+  if (idx === -1) return null;
+  return pool.items[idx];
 }
 
 /**
@@ -1567,11 +1729,92 @@ function acquireParticle(pool) {
 function releaseParticle(pool, particle) {
   for (let i = 0; i < pool.items.length; i++) {
     if (pool.items[i] === particle) {
-      pool.activeFlags[i] = false;
-      pool.activeCount--;
+      releaseToPool(pool, i);
       return;
     }
   }
+}
+
+/**
+ * Spawns particles using the pool instead of array allocation.
+ * Acquires particles from pool, initializes properties in-place.
+ * @param {Object} pool - The particle pool
+ * @param {number} x - Spawn X position
+ * @param {number} y - Spawn Y position
+ * @param {number} count - Number of particles to spawn
+ * @param {Object} config - Color, speed, lifetime config
+ * @returns {number} Number of particles actually spawned (pool capacity limited)
+ */
+function spawnParticlesPooled(pool, x, y, count, config) {
+  const color = (config && config.color) || PARTICLE_COLOR;
+  const minLife = (config && config.minLife) || PARTICLE_MIN_LIFE;
+  const maxLife = (config && config.maxLife) || PARTICLE_MAX_LIFE;
+  const minRadius = (config && config.minRadius) || PARTICLE_MIN_RADIUS;
+  const maxRadius = (config && config.maxRadius) || PARTICLE_MAX_RADIUS;
+  const speed = (config && config.speed) || PARTICLE_SPEED;
+
+  let spawned = 0;
+  for (let i = 0; i < count; i++) {
+    const idx = acquireFromPool(pool);
+    if (idx === -1) break;
+    const p = pool.items[idx];
+    const angle = Math.random() * Math.PI * 2;
+    const spd = speed * (0.5 + Math.random() * 0.5);
+    const life = minLife + Math.random() * (maxLife - minLife);
+    p.x = x;
+    p.y = y;
+    p.vx = Math.cos(angle) * spd;
+    p.vy = Math.sin(angle) * spd;
+    p.radius = minRadius + Math.random() * (maxRadius - minRadius);
+    p.color = color;
+    p.alpha = 1.0;
+    p.life = life;
+    p.maxLife = life;
+    spawned++;
+  }
+  return spawned;
+}
+
+/**
+ * Updates all active particles in the pool in-place.
+ * Releases expired particles back to pool.
+ * @param {Object} pool - The particle pool
+ * @param {number} dt - Delta time in milliseconds
+ */
+function updateParticlesPooled(pool, dt) {
+  const dtSec = dt / 1000;
+  for (let i = 0; i < pool.items.length; i++) {
+    if (!pool.activeFlags[i]) continue;
+    const p = pool.items[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      releaseToPool(pool, i);
+    } else {
+      p.x += p.vx * dtSec;
+      p.y += p.vy * dtSec;
+      p.alpha = Math.max(0, p.life / p.maxLife);
+    }
+  }
+}
+
+/**
+ * Renders all active particles from the pool.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Object} pool - The particle pool
+ */
+function renderParticlesPooled(ctx, pool) {
+  if (pool.activeCount === 0) return;
+  ctx.save();
+  for (let i = 0; i < pool.items.length; i++) {
+    if (!pool.activeFlags[i]) continue;
+    const p = pool.items[i];
+    ctx.globalAlpha = p.alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 /**
@@ -1581,25 +1824,23 @@ function getActiveCount(pool) {
   return pool.activeCount;
 }
 
+// === Pipe Pool (specialized) ===
+
 /**
  * Creates a pipe pool with pre-allocated pipe pair objects.
  * All pipes start inactive and available for reuse.
  * Returns a pool object with items, activeFlags, and activeCount.
  */
 function createPipePool(size) {
-  const items = [];
-  const activeFlags = [];
-  for (let i = 0; i < size; i++) {
-    items.push({
+  return createPool(size, function () {
+    return {
       x: 0,
       gapTop: 0,
       gapBottom: 0,
       width: PIPE_WIDTH,
       scored: false
-    });
-    activeFlags.push(false);
-  }
-  return { items, activeFlags, activeCount: 0 };
+    };
+  });
 }
 
 /**
@@ -1608,14 +1849,9 @@ function createPipePool(size) {
  * Marks the acquired pipe as active.
  */
 function acquirePipe(pool) {
-  for (let i = 0; i < pool.items.length; i++) {
-    if (!pool.activeFlags[i]) {
-      pool.activeFlags[i] = true;
-      pool.activeCount++;
-      return pool.items[i];
-    }
-  }
-  return null;
+  const idx = acquireFromPool(pool);
+  if (idx === -1) return null;
+  return pool.items[idx];
 }
 
 /**
@@ -1625,8 +1861,7 @@ function acquirePipe(pool) {
 function releasePipe(pool, pipe) {
   for (let i = 0; i < pool.items.length; i++) {
     if (pool.items[i] === pipe) {
-      pool.activeFlags[i] = false;
-      pool.activeCount--;
+      releaseToPool(pool, i);
       return;
     }
   }
@@ -1678,7 +1913,7 @@ function initParallaxLayers(canvasWidth, canvasHeight) {
  * Updates parallax layer offsets based on current pipe speed and delta time.
  * Back layer scrolls at 20% of pipe speed, front layer at 50%.
  * Offsets wrap around at tileWidth for seamless looping.
- * Returns a new layers object (pure update).
+ * Mutates the layers object in-place (zero allocation).
  */
 function updateParallaxLayers(layers, pipeSpeed, dt) {
   // Normalize dt from milliseconds to frame units (16.67ms = 1 frame at 60fps)
@@ -1686,13 +1921,10 @@ function updateParallaxLayers(layers, pipeSpeed, dt) {
   const backAdvance = pipeSpeed * layers.back.speedRatio * frameScale;
   const frontAdvance = pipeSpeed * layers.front.speedRatio * frameScale;
 
-  const newBackOffset = (layers.back.offset + backAdvance) % layers.back.tileWidth;
-  const newFrontOffset = (layers.front.offset + frontAdvance) % layers.front.tileWidth;
+  layers.back.offset = (layers.back.offset + backAdvance) % layers.back.tileWidth;
+  layers.front.offset = (layers.front.offset + frontAdvance) % layers.front.tileWidth;
 
-  return {
-    back: { ...layers.back, offset: newBackOffset },
-    front: { ...layers.front, offset: newFrontOffset }
-  };
+  return layers;
 }
 
 /**
@@ -1710,7 +1942,7 @@ function renderParallaxLayers(ctx, layers, canvasWidth, canvasHeight, dayNightPo
   } else if (dayNightPosition != null) {
     ctx.fillStyle = interpolateBackground(dayNightPosition);
   } else {
-    ctx.fillStyle = '#1a1a2e';
+    ctx.fillStyle = '#0f0f23';
   }
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -1738,7 +1970,7 @@ function renderParallaxLayers(ctx, layers, canvasWidth, canvasHeight, dayNightPo
   }
 
   // Front layer: subtle vertical grid lines
-  ctx.strokeStyle = 'rgba(100, 100, 180, 0.2)';
+  ctx.strokeStyle = 'rgba(179, 102, 255, 0.15)';
   ctx.lineWidth = 1;
   const frontOffset = layers.front.offset;
   const frontTile = layers.front.tileWidth;
@@ -2390,12 +2622,12 @@ const RECAP_COUNTDOWN = 3;  // seconds before restart enabled
  * The countdown starts at RECAP_COUNTDOWN seconds and blocks input until it reaches 0.
  */
 function showDeathRecap(score, highScore, isNewHighScore) {
-  const overlay = document.getElementById('death-recap-overlay');
-  const scoreEl = document.getElementById('death-recap-score');
-  const highScoreEl = document.getElementById('death-recap-highscore');
-  const newHighEl = document.getElementById('death-recap-new-high');
-  const countdownEl = document.getElementById('death-recap-countdown');
-  const restartEl = document.getElementById('death-recap-restart');
+  const overlay = domCache.deathRecapOverlay;
+  const scoreEl = domCache.deathRecapScore;
+  const highScoreEl = domCache.deathRecapHighscore;
+  const newHighEl = domCache.deathRecapNewHigh;
+  const countdownEl = domCache.deathRecapCountdown;
+  const restartEl = domCache.deathRecapRestart;
 
   if (scoreEl) scoreEl.textContent = `Score: ${score}`;
   if (highScoreEl) highScoreEl.textContent = `High Score: ${highScore}`;
@@ -2405,9 +2637,9 @@ function showDeathRecap(score, highScore, isNewHighScore) {
     countdownEl.style.display = 'block';
   }
   if (restartEl) restartEl.style.display = 'none';
-  // Don't show overlay directly — fadeIn() handles display and opacity transition
+  // Don't show overlay directly — fadeIn()/showOverlay() handles display and visibility
   if (overlay) {
-    overlay.style.opacity = '0';
+    overlay.classList.remove('visible');
     overlay.style.display = 'none';
   }
 
@@ -2430,8 +2662,8 @@ function updateDeathRecap(deltaMs) {
     gameContext.deathRecap.countdown = 0;
     gameContext.deathRecap.inputEnabled = true;
 
-    const countdownEl = document.getElementById('death-recap-countdown');
-    const restartEl = document.getElementById('death-recap-restart');
+    const countdownEl = domCache.deathRecapCountdown;
+    const restartEl = domCache.deathRecapRestart;
     if (countdownEl) countdownEl.style.display = 'none';
     if (restartEl) {
       restartEl.style.display = 'block';
@@ -2439,7 +2671,7 @@ function updateDeathRecap(deltaMs) {
     }
   } else {
     const secondsLeft = Math.ceil(gameContext.deathRecap.countdown / 1000);
-    const countdownEl = document.getElementById('death-recap-countdown');
+    const countdownEl = domCache.deathRecapCountdown;
     if (countdownEl) countdownEl.textContent = `Restarting in ${secondsLeft}...`;
   }
 }
@@ -2461,30 +2693,60 @@ function hideDeathRecap() {
 const FADE_DURATION = 400; // milliseconds
 
 /**
- * Fades out an element by setting its opacity to 0.
+ * Shows an overlay element with a CSS class-based fade-in transition.
+ * Sets display to flex, forces reflow, then adds the .visible class
+ * which triggers opacity + transform transitions defined in CSS.
+ */
+function showOverlay(element) {
+  if (!element) return;
+  element.style.display = 'flex';
+  void element.offsetHeight; // force reflow
+  element.classList.add('visible');
+}
+
+/**
+ * Hides an overlay element by removing the .visible class.
+ * CSS transitions handle the fade-out animation.
+ * Note: display is NOT set to none here — CSS or a transitionend listener handles that.
+ */
+function hideOverlay(element) {
+  if (!element) return;
+  element.classList.remove('visible');
+}
+
+/**
+ * Triggers the score pulse animation on increment.
+ * Removes and re-adds the .score-pulse CSS class with a reflow
+ * in between to re-trigger the keyframe animation.
+ */
+function triggerScorePulse(scoreElement) {
+  if (!scoreElement) return;
+  scoreElement.classList.remove('score-pulse');
+  void scoreElement.offsetHeight; // force reflow
+  scoreElement.classList.add('score-pulse');
+}
+
+/**
+ * Fades out an element by removing the .visible class.
  * After the specified duration, hides the element with display: none.
- * Relies on CSS `transition: opacity 400ms ease` already on the element.
+ * Uses class-based transitions via the .visible pattern.
  */
 function fadeOut(element, durationMs) {
   if (!element) return;
-  element.style.opacity = '0';
+  hideOverlay(element);
   setTimeout(() => {
     element.style.display = 'none';
   }, durationMs);
 }
 
 /**
- * Fades in an element by showing it and setting its opacity to 1.
- * Sets display to flex first (with opacity 0), then transitions to opacity 1.
- * Relies on CSS `transition: opacity 400ms ease` already on the element.
+ * Fades in an element by showing it with the class-based transition.
+ * Delegates to showOverlay which sets display:flex, forces reflow,
+ * and adds .visible class for CSS-driven animation.
  */
 function fadeIn(element, durationMs) {
   if (!element) return;
-  element.style.opacity = '0';
-  element.style.display = 'flex';
-  // Force reflow so the browser registers the opacity:0 before transitioning to 1
-  void element.offsetWidth;
-  element.style.opacity = '1';
+  showOverlay(element);
 }
 
 /**
@@ -2493,6 +2755,100 @@ function fadeIn(element, durationMs) {
  */
 function setTransitionLock(locked) {
   gameContext.transitionLock = locked;
+}
+
+/**
+ * Shows or hides the score overlay based on the current game state.
+ * The overlay is visible (with 0.5 opacity via CSS) only during PLAYING state.
+ */
+function updateScoreOverlayVisibility(state) {
+  const el = domCache.scoreOverlay;
+  if (!el) return;
+  if (state === GameState.PLAYING) {
+    showOverlay(el);
+  } else {
+    hideOverlay(el);
+  }
+}
+
+// === Help Overlay System ===
+
+/**
+ * Returns whether the help button should be visible for the given game state.
+ * Visible only during START_SCREEN and PAUSED states.
+ * @param {string} gameState - Current GameState value
+ * @returns {boolean}
+ */
+function isHelpButtonVisible(gameState) {
+  return gameState === GameState.START_SCREEN || gameState === GameState.PAUSED;
+}
+
+/**
+ * Returns whether a given input event should be processed.
+ * Blocks all gameplay inputs (flap, steering, game_start) while help overlay is open.
+ * Only allows help_toggle and escape through when overlay is visible.
+ * @param {string} eventType - The input event type ('flap', 'steering', 'game_start', 'help_toggle', 'escape')
+ * @param {boolean} helpOverlayVisible - Whether overlay is showing
+ * @returns {boolean}
+ */
+function shouldProcessInput(eventType, helpOverlayVisible) {
+  if (!helpOverlayVisible) return true;
+  return eventType === 'help_toggle' || eventType === 'escape';
+}
+
+/**
+ * Toggles the help overlay visibility.
+ * If opening: records previous state, shows overlay, updates helpOverlayVisible.
+ * If closing: hides overlay, restores previous state tracking.
+ */
+function toggleHelpOverlay() {
+  if (!domCache.helpOverlay || !domCache.helpBtn) return;
+
+  if (gameContext.helpOverlayVisible) {
+    // Close overlay with fade-out
+    hideOverlay(domCache.helpOverlay);
+    // Set display none after transition completes
+    setTimeout(() => {
+      if (!gameContext.helpOverlayVisible) {
+        domCache.helpOverlay.style.display = 'none';
+      }
+    }, 250);
+    gameContext.helpOverlayVisible = false;
+    gameContext.helpOverlayPreviousState = null;
+  } else {
+    // Only open if help button is visible (START_SCREEN or PAUSED)
+    if (!isHelpButtonVisible(gameContext.state)) return;
+    gameContext.helpOverlayPreviousState = gameContext.state;
+    // Use showOverlay for fade-in with scale transition
+    showOverlay(domCache.helpOverlay);
+    gameContext.helpOverlayVisible = true;
+  }
+}
+
+/**
+ * Auto-closes the help overlay if it is currently visible.
+ * Called before processing external state transitions.
+ */
+function closeHelpOverlayIfOpen() {
+  if (gameContext.helpOverlayVisible) {
+    hideOverlay(domCache.helpOverlay);
+    domCache.helpOverlay.style.display = 'none';
+    gameContext.helpOverlayVisible = false;
+    gameContext.helpOverlayPreviousState = null;
+  }
+}
+
+/**
+ * Updates the help button visibility based on the current game state.
+ * Shows the button during START_SCREEN and PAUSED, hides otherwise.
+ */
+function updateHelpButtonVisibility(state) {
+  if (!domCache.helpBtn) return;
+  if (isHelpButtonVisible(state)) {
+    domCache.helpBtn.style.display = '';
+  } else {
+    domCache.helpBtn.style.display = 'none';
+  }
 }
 
 // === Touch Input Handler ===
@@ -2521,6 +2877,9 @@ function togglePause(gameContext) {
   // Block pause during death animation
   if (gameContext.deathAnimation && gameContext.deathAnimation.active) return gameContext;
 
+  // Auto-close help overlay before state transition
+  closeHelpOverlayIfOpen();
+
   const newState = transitionState(gameContext.state, 'ESCAPE');
   if (newState === gameContext.state) return gameContext;
 
@@ -2541,12 +2900,27 @@ function togglePause(gameContext) {
     }
   }
 
-  const pauseOverlay = document.getElementById('pause-overlay');
-  if (pauseOverlay) {
-    pauseOverlay.style.display = gameContext.paused ? 'flex' : 'none';
+  // Pause/resume ambient music on state change
+  if (musicEngine.ctx) {
+    if (newState === GameState.PAUSED) {
+      pauseMusic(musicEngine);
+    } else if (newState === GameState.PLAYING) {
+      resumeMusic(musicEngine);
+    }
   }
 
-  updateAriaLabel(document.getElementById('game-canvas'), gameContext.state, gameContext.score);
+  const pauseOverlay = domCache.pauseOverlay;
+  if (pauseOverlay) {
+    if (gameContext.paused) {
+      showOverlay(pauseOverlay);
+    } else {
+      hideOverlay(pauseOverlay);
+    }
+  }
+
+  updateScoreOverlayVisibility(gameContext.state);
+  updateHelpButtonVisibility(gameContext.state);
+  updateAriaLabel(domCache.canvas, gameContext.state, gameContext.score);
 
   return gameContext;
 }
@@ -2572,6 +2946,11 @@ function setupInputHandlers(canvas, onInput, onActivateSteering) {
     }
     if (e.code === 'Escape') {
       e.preventDefault();
+      // If help overlay is open, close it instead of toggling pause
+      if (gameContext.helpOverlayVisible) {
+        toggleHelpOverlay();
+        return;
+      }
       togglePause(gameContext);
     }
   });
@@ -2580,8 +2959,17 @@ function setupInputHandlers(canvas, onInput, onActivateSteering) {
     onInput();
   });
 
+  // Help button toggle
+  const helpBtn = domCache.helpBtn;
+  if (helpBtn) {
+    helpBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleHelpOverlay();
+    });
+  }
+
   // On-screen activation button for Steering Mode
-  const activateBtn = document.getElementById('steering-activate-btn');
+  const activateBtn = domCache.steeringActivateBtn;
   if (activateBtn) {
     activateBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2590,7 +2978,7 @@ function setupInputHandlers(canvas, onInput, onActivateSteering) {
   }
 
   // Restart button in death recap overlay
-  const restartBtn = document.getElementById('death-recap-restart');
+  const restartBtn = domCache.deathRecapRestart;
   if (restartBtn) {
     restartBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2635,15 +3023,121 @@ function renderPipeWithCaps(ctx, pipe, canvasHeight, capOverhang, capHeight, pip
   );
 }
 
+/**
+ * Calculates a highlight color that is 20% lighter than the base hex color.
+ * Used for the 3D lighting effect on pipe cap top edges.
+ * @param {string} baseColor - Hex color string (e.g., '#00d400')
+ * @returns {string} Lighter hex color string
+ */
+function calculateHighlightColor(baseColor) {
+  const hex = baseColor.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  const lighterR = Math.min(255, Math.round(r + (255 - r) * 0.2));
+  const lighterG = Math.min(255, Math.round(g + (255 - g) * 0.2));
+  const lighterB = Math.min(255, Math.round(b + (255 - b) * 0.2));
+  return '#' + lighterR.toString(16).padStart(2, '0') + lighterG.toString(16).padStart(2, '0') + lighterB.toString(16).padStart(2, '0');
+}
+
+/**
+ * Renders all pipes with batched style assignments.
+ * Sets fillStyle once per color group, draws all pipe bodies,
+ * then sets cap style once and draws all caps, then highlights.
+ * Minimizes context state changes for better performance.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Array} pipes - Active pipe objects
+ * @param {string} pipeColor - Current pipe body color
+ * @param {string} capColor - Current pipe cap color
+ * @param {string} highlightColor - Lighter shade for cap top edge
+ * @param {number} canvasHeight
+ * @param {number} capOverhang - Scaled cap overhang in pixels
+ * @param {number} capHeight - Scaled cap height in pixels
+ */
+function renderPipesBatched(ctx, pipes, pipeColor, capColor, highlightColor, canvasHeight, capOverhang, capHeight) {
+  if (pipes.length === 0) return;
+
+  const overhang = capOverhang !== undefined ? capOverhang : CAP_OVERHANG;
+  const height = capHeight !== undefined ? capHeight : CAP_HEIGHT;
+
+  // Pass 1: Draw all pipe bodies with a single fillStyle assignment
+  ctx.fillStyle = pipeColor;
+  for (let i = 0; i < pipes.length; i++) {
+    const pipe = pipes[i];
+    // Top pipe body
+    ctx.fillRect(pipe.x, 0, pipe.width, pipe.gapTop);
+    // Bottom pipe body
+    ctx.fillRect(pipe.x, pipe.gapBottom, pipe.width, canvasHeight - pipe.gapBottom);
+  }
+
+  // Pass 2: Draw all pipe caps with a single fillStyle assignment
+  ctx.fillStyle = capColor;
+  for (let i = 0; i < pipes.length; i++) {
+    const pipe = pipes[i];
+    // Top pipe cap (at bottom of top pipe)
+    ctx.fillRect(
+      pipe.x - overhang,
+      pipe.gapTop - height,
+      pipe.width + overhang * 2,
+      height
+    );
+    // Bottom pipe cap (at top of bottom pipe)
+    ctx.fillRect(
+      pipe.x - overhang,
+      pipe.gapBottom,
+      pipe.width + overhang * 2,
+      height
+    );
+  }
+
+  // Pass 3: Draw all cap highlight lines with a single strokeStyle assignment
+  ctx.strokeStyle = highlightColor;
+  ctx.lineWidth = 1;
+  for (let i = 0; i < pipes.length; i++) {
+    const pipe = pipes[i];
+    const capX = pipe.x - overhang;
+    const capW = pipe.width + overhang * 2;
+
+    // Top cap highlight (top edge of the top cap rect)
+    ctx.beginPath();
+    ctx.moveTo(capX, pipe.gapTop - height + 0.5);
+    ctx.lineTo(capX + capW, pipe.gapTop - height + 0.5);
+    ctx.stroke();
+
+    // Bottom cap highlight (top edge of the bottom cap rect)
+    ctx.beginPath();
+    ctx.moveTo(capX, pipe.gapBottom + 0.5);
+    ctx.lineTo(capX + capW, pipe.gapBottom + 0.5);
+    ctx.stroke();
+  }
+}
+
 // === Score Popup ===
+
+/**
+ * Removes a popup element safely (no-op if already removed).
+ * Cancels the fallback timer if animationend fired first.
+ * @param {HTMLElement} popup - The popup DOM element
+ * @param {number|null} fallbackTimerId - Timer ID to cancel if animationend fired first
+ */
+function removeScorePopup(popup, fallbackTimerId) {
+  if (fallbackTimerId !== null) {
+    clearTimeout(fallbackTimerId);
+  }
+  if (popup.parentNode !== null) {
+    popup.remove();
+  }
+}
 
 /**
  * Creates a DOM-based "+1" score popup element positioned near the player.
  * The popup floats upward and fades out over 800ms via CSS animation.
- * Removes itself from the DOM when the animation completes.
+ * Lifecycle:
+ * - Normal: animationend listener removes popup; 1000ms fallback timeout as safety net
+ * - Reduced motion: skip animation listener; remove popup after 50ms timeout
  */
 function createScorePopup(playerX, playerY) {
-  const container = document.getElementById('score-popup-container');
+  const container = domCache.scorePopupContainer;
   if (!container) return;
   const popup = document.createElement('div');
   popup.className = 'score-popup';
@@ -2651,29 +3145,42 @@ function createScorePopup(playerX, playerY) {
   popup.style.left = `${playerX + 20}px`;
   popup.style.top = `${playerY - 10}px`;
   container.appendChild(popup);
-  popup.addEventListener('animationend', () => {
-    popup.remove();
-  });
+
+  if (reducedMotionEnabled) {
+    // Skip animation listener; remove after 50ms
+    setTimeout(() => {
+      removeScorePopup(popup, null);
+    }, 50);
+  } else {
+    // Set up fallback timeout that removes popup if animationend doesn't fire
+    let fallbackTimerId = setTimeout(() => {
+      fallbackTimerId = null;
+      removeScorePopup(popup, null);
+    }, 1000);
+
+    // Primary removal via animationend; cancel fallback timer
+    popup.addEventListener('animationend', () => {
+      removeScorePopup(popup, fallbackTimerId);
+    }, { once: true });
+  }
 }
 
 // === Renderer ===
 
 /**
- * Renders a single data packet as a glowing purple circle.
+ * Renders a single data packet as a glowing circle with accent-secondary glow.
  * Uses canvas shadowBlur for the neon glow effect.
- * When reduced motion is enabled, renders without glow for static appearance.
+ * When reduced motion is enabled, renders with static glow at 70% opacity.
  */
 function renderDataPacket(ctx, packet) {
   ctx.beginPath();
   ctx.arc(packet.x, packet.y, packet.radius, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(160, 32, 240, 0.8)';
+  ctx.fillStyle = 'rgba(179, 102, 255, 0.8)';
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 15;
   ctx.fill();
-  if (!reducedMotionEnabled) {
-    ctx.shadowColor = '#a020f0';
-    ctx.shadowBlur = 10;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent';
   ctx.closePath();
 }
 
@@ -2687,8 +3194,9 @@ function renderDataPacket(ctx, packet) {
 function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
   const { state, player, pipes, score, highScore, steeringModeActive, dataPackets, screenShake } = gameContext;
 
-  // Clear the entire canvas before drawing (prevents ghosted frames during screen shake)
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  // Render canvas background (gradient + scrolling grid) — replaces clearRect
+  const gridOffset = calculateGridOffset(bgFrameCount, reducedMotionEnabled);
+  renderBackground(ctx, canvasWidth, canvasHeight, gridOffset);
 
   // Apply screen shake offset via temporary transform
   const shakeOffset = getShakeOffset(screenShake);
@@ -2708,13 +3216,13 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
   }
 
   if (state === GameState.PLAYING || state === GameState.GAME_OVER || state === GameState.PAUSED) {
-    // Pipes with theme color — theme pipe color takes precedence
+    // Pipes with theme color — batched rendering for minimal style changes
     const scaledCapOverhang = CAP_OVERHANG * gameContext.scaleFactor;
     const scaledCapHeight = CAP_HEIGHT * gameContext.scaleFactor;
     const pipeColor = theme.pipe;
-    for (const pipe of pipes) {
-      renderPipeWithCaps(ctx, pipe, canvasHeight, scaledCapOverhang, scaledCapHeight, pipeColor);
-    }
+    const capColor = pipeColor;
+    const highlightColor = calculateHighlightColor(pipeColor);
+    renderPipesBatched(ctx, pipes, pipeColor, capColor, highlightColor, canvasHeight, scaledCapOverhang, scaledCapHeight);
 
     // Data packets (glowing purple circles)
     for (const packet of dataPackets) {
@@ -2731,13 +3239,8 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
       renderShieldPickup(ctx, pickup);
     }
 
-    // Slow-motion pickups (yellow circles)
-    for (const pickup of gameContext.slowMotionPickups) {
-      renderSlowMotionPickup(ctx, pickup);
-    }
-
     // Particles (collection burst effects)
-    renderParticles(ctx, gameContext.particles);
+    renderParticlesPooled(ctx, gameContext.particlePool);
 
     // Trail_Effect rendering (disabled when reduced motion is enabled)
     // Trail system renders behind the player sprite when active
@@ -2755,7 +3258,7 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
       const da = gameContext.deathAnimation;
       ctx.save();
       if (spriteLoadFailed) {
-        ctx.fillStyle = '#a020f0';
+        ctx.fillStyle = '#b366ff';
         renderRotatedSprite(ctx, null, da.x, da.y, sprW, sprH, da.rotation);
       } else {
         renderRotatedSprite(ctx, spriteImage, da.x, da.y, sprW, sprH, da.rotation);
@@ -2764,23 +3267,33 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
     } else {
       const rotationAngle = calculateRotation(player.velocity / gameContext.scaleFactor);
       if (steeringModeActive) {
+        // Steering Mode: enhanced glow with pulsing opacity
+        const glowElapsed = performance.now();
+        const glowOpacity = calculateGlowOpacity(glowElapsed, reducedMotionEnabled);
         ctx.save();
-        ctx.globalAlpha = 0.6 * graceOpacity;
+        ctx.shadowColor = '#b366ff';
+        ctx.shadowBlur = 25;
+        ctx.globalAlpha = glowOpacity * graceOpacity;
         if (spriteLoadFailed) {
-          ctx.fillStyle = '#a020f0';
+          ctx.fillStyle = '#b366ff';
           renderRotatedSprite(ctx, null, player.x, player.y, sprW, sprH, rotationAngle);
         } else {
           renderRotatedSprite(ctx, spriteImage, player.x, player.y, sprW, sprH, rotationAngle);
         }
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
         ctx.globalAlpha = 1.0;
-        ctx.fillStyle = 'rgba(128, 0, 255, 0.3)';
+        ctx.fillStyle = 'rgba(179, 102, 255, 0.3)';
         renderRotatedSprite(ctx, null, player.x, player.y, sprW, sprH, rotationAngle);
         ctx.restore();
       } else {
+        // Normal play: accent-primary glow on Ghosty
         ctx.save();
+        ctx.shadowColor = '#b366ff';
+        ctx.shadowBlur = 10;
         ctx.globalAlpha = graceOpacity;
         if (spriteLoadFailed) {
-          ctx.fillStyle = '#a020f0';
+          ctx.fillStyle = '#b366ff';
           renderRotatedSprite(ctx, null, player.x, player.y, sprW, sprH, rotationAngle);
         } else {
           renderRotatedSprite(ctx, spriteImage, player.x, player.y, sprW, sprH, rotationAngle);
@@ -2799,14 +3312,11 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
       renderActiveShield(ctx, player, gameContext.scaleFactor);
     }
 
-    // Score (offset below the steering charge bar)
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '20px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(formatScore(score, highScore), 10, 50);
+    // Score displayed via DOM overlay (updated below)
+    if (domCache.scoreOverlay) {
+      domCache.scoreOverlay.textContent = score;
+    }
 
-    // Slow-motion yellow border overlay (active or ramping up)
-    renderSlowMotionOverlay(ctx, canvasWidth, canvasHeight, gameContext);
 
     // Theme transition white fade overlay
     if (gameContext.themeSystem.transitioning) {
@@ -2815,6 +3325,12 @@ function render(ctx, gameContext, spriteImage, canvasWidth, canvasHeight) {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvasWidth, canvasHeight);
       ctx.restore();
+    }
+
+    // Death red tint flash overlay (200ms red overlay before spin-and-fall)
+    if (gameContext.deathRedTint && gameContext.deathRedTint.active) {
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
     }
   }
 
@@ -2838,8 +3354,13 @@ let spriteImage = null;
 let spriteLoadFailed = false;
 let audioManager = null;
 let chiptuneEngine = null;
+let musicEngine = createMusicEngine();
 let lastTimestamp = 0;
 let ctx = null;
+let bgFrameCount = 0;
+
+// DOM element cache — initialized once at startup, reused throughout the session
+let domCache = null;
 
 /**
  * Resets the game context to initial playing state.
@@ -2859,6 +3380,7 @@ function resetGame() {
   gameContext.shieldPickups = [];
   gameContext.shieldActive = false;
   gameContext.shieldTimer = 0;
+  gameContext.shieldAbsorbing = false;
   gameContext.magnetPickups = [];
   gameContext.score = 0;
   gameContext.steeringCharge = 0;
@@ -2870,19 +3392,17 @@ function resetGame() {
   gameContext.screenShake = { active: false, timer: 0, offsetX: 0, offsetY: 0 };
 
   // Release all active particles back to pool
-  for (let i = 0; i < gameContext.particles.length; i++) {
-    releaseParticle(gameContext.particlePool, gameContext.particles[i]);
+  for (let i = 0; i < gameContext.particlePool.items.length; i++) {
+    if (gameContext.particlePool.activeFlags[i]) {
+      releaseToPool(gameContext.particlePool, i);
+    }
   }
-  gameContext.particles = [];
 
   gameContext.parallaxLayers = initParallaxLayers(gameContext.canvasWidth, gameContext.canvasHeight);
   gameContext.deathRecap = { active: false, countdown: 0, inputEnabled: true };
   gameContext.transitionLock = false;
   gameContext.deathAnimation = null;
-  gameContext.slowMotionPickups = [];
-  gameContext.slowMotionActive = false;
-  gameContext.slowMotionTimer = 0;
-  gameContext.slowMotionRampTimer = 0;
+  gameContext.deathRedTint = { active: false, timer: 0 };
   gameContext.magnetActive = false;
   gameContext.magnetTimer = 0;
   gameContext.pipeColor = '#00d400';
@@ -2894,9 +3414,6 @@ function resetGame() {
     gameContext.trail = initTrailBuffer();
   }
   updateChargeBar(0);
-
-  // Hide leaderboard overlay on restart
-  hideLeaderboard();
 }
 
 /**
@@ -2909,12 +3426,21 @@ function onInput() {
   // Block input during active transitions
   if (gameContext.transitionLock) return;
 
+  // Block gameplay inputs while help overlay is visible
+  if (!shouldProcessInput('flap', gameContext.helpOverlayVisible)) return;
+
   // Block all input during death animation
   if (gameContext.deathAnimation && gameContext.deathAnimation.active) return;
 
+  // Block all input during death red tint flash
+  if (gameContext.deathRedTint && gameContext.deathRedTint.active) return;
+
   if (gameContext.state === GameState.START_SCREEN) {
+    // Auto-close help overlay before state transition
+    closeHelpOverlayIfOpen();
+
     // Fade out the start overlay when transitioning to PLAYING
-    const startOverlay = document.getElementById('start-overlay');
+    const startOverlay = domCache.startOverlay;
     setTransitionLock(true);
     fadeOut(startOverlay, FADE_DURATION);
     setTimeout(() => {
@@ -2923,19 +3449,27 @@ function onInput() {
 
     resetGame();
     gameContext.state = transitionState(gameContext.state, 'INPUT');
-    updateAriaLabel(document.getElementById('game-canvas'), gameContext.state, gameContext.score);
+    updateScoreOverlayVisibility(gameContext.state);
+    updateHelpButtonVisibility(gameContext.state);
+    updateAriaLabel(domCache.canvas, gameContext.state, gameContext.score);
     audioManager.startBackgroundHum();
     if (chiptuneEngine) chiptuneEngine.startMusic();
+    if (musicEngine.ctx) {
+      if (musicEngine.isPlaying) {
+        resumeMusic(musicEngine);
+      } else {
+        startMusic(musicEngine);
+      }
+    }
   } else if (gameContext.state === GameState.PLAYING) {
-    const flapMultiplier = getEffectiveSpeedMultiplier(gameContext);
-    gameContext.player.velocity = FLAP_IMPULSE * gameContext.scaleFactor * flapMultiplier;
+    gameContext.player.velocity = FLAP_IMPULSE * gameContext.scaleFactor;
     audioManager.playFlap();
   } else if (gameContext.state === GameState.GAME_OVER) {
     if (!gameContext.deathRecap.inputEnabled) return;
 
     // Cross-fade: fade out death recap, fade in start overlay
-    const deathRecapOverlay = document.getElementById('death-recap-overlay');
-    const startOverlay = document.getElementById('start-overlay');
+    const deathRecapOverlay = domCache.deathRecapOverlay;
+    const startOverlay = domCache.startOverlay;
 
     setTransitionLock(true);
     fadeOut(deathRecapOverlay, FADE_DURATION);
@@ -2946,7 +3480,9 @@ function onInput() {
 
     hideDeathRecap();
     gameContext.state = transitionState(gameContext.state, 'INPUT');
-    updateAriaLabel(document.getElementById('game-canvas'), gameContext.state, gameContext.score);
+    updateScoreOverlayVisibility(gameContext.state);
+    updateHelpButtonVisibility(gameContext.state);
+    updateAriaLabel(domCache.canvas, gameContext.state, gameContext.score);
   }
 }
 
@@ -2955,11 +3491,18 @@ function onInput() {
  * Only activates if PLAYING and charge is full.
  */
 function onActivateSteering() {
+  // Block steering activation while help overlay is visible
+  if (!shouldProcessInput('steering', gameContext.helpOverlayVisible)) return;
+
   if (gameContext.state === GameState.PLAYING && canActivateSteering(gameContext.steeringCharge, gameContext.steeringModeActive)) {
     gameContext = activateSteeringMode(gameContext);
     audioManager.playSteeringWhoosh();
-    const btn = document.getElementById('steering-activate-btn');
-    if (btn) btn.style.display = 'none';
+    const btn = domCache.steeringActivateBtn;
+    if (btn) {
+      btn.classList.remove('visible');
+      btn.classList.remove('btn-reveal');
+      btn.style.display = 'none';
+    }
   }
 }
 
@@ -2981,6 +3524,17 @@ function update(deltaMs) {
 
   // Update death recap countdown during GAME_OVER state
   if (gameContext.state === GameState.GAME_OVER) {
+    // Update death red tint timer (counts down from 200ms)
+    if (gameContext.deathRedTint && gameContext.deathRedTint.active) {
+      gameContext.deathRedTint.timer -= deltaMs;
+      if (gameContext.deathRedTint.timer <= 0) {
+        gameContext.deathRedTint.active = false;
+        gameContext.deathRedTint.timer = 0;
+        // Tint complete — start the spin-and-fall death animation
+        gameContext.deathAnimation = initDeathAnimation(gameContext.player, gameContext.player.velocity);
+      }
+    }
+
     // Update death animation if active
     if (gameContext.deathAnimation && gameContext.deathAnimation.active) {
       gameContext.deathAnimation = updateDeathAnimation(
@@ -2991,7 +3545,7 @@ function update(deltaMs) {
       );
       // When animation completes, trigger death recap overlay fade-in
       if (!gameContext.deathAnimation.active) {
-        const deathRecapOverlay = document.getElementById('death-recap-overlay');
+        const deathRecapOverlay = domCache.deathRecapOverlay;
         fadeIn(deathRecapOverlay, DEATH_RECAP_FADE_IN);
       }
     }
@@ -3000,6 +3554,9 @@ function update(deltaMs) {
   }
 
   if (gameContext.state !== GameState.PLAYING) return;
+
+  // Increment background grid frame counter for scrolling animation
+  bgFrameCount++;
 
   // Get current scale factor for physics calculations
   const s = gameContext.scaleFactor;
@@ -3010,25 +3567,15 @@ function update(deltaMs) {
   gameContext.currentDifficulty = getDifficultyParams(gameContext.score);
 
   // Player movement: apply scaled gravity and terminal velocity (frame-rate independent)
-  const speedMult = getEffectiveSpeedMultiplier(gameContext);
   const frameScalePhysics = deltaMs / 16.67;
-  const scaledGravity = GRAVITY * s * speedMult * frameScalePhysics;
-  const scaledTerminalVelocity = TERMINAL_VELOCITY * s * speedMult;
+  const scaledGravity = GRAVITY * s * frameScalePhysics;
+  const scaledTerminalVelocity = TERMINAL_VELOCITY * s;
 
-  // During Steering Mode, use autopilot to navigate through pipe gaps
-  if (gameContext.steeringModeActive) {
-    const sprW = SPRITE_WIDTH * s;
-    const sprH = SPRITE_HEIGHT * s;
-    const autopilotVelocity = calculateAutopilotVelocity(
-      gameContext.player.y, sprH, gameContext.pipes, gameContext.player.x, gameContext.steeringModeTimer
-    );
-    gameContext.player.velocity = autopilotVelocity * s;
-    gameContext.player.y = gameContext.player.y + gameContext.player.velocity * frameScalePhysics;
-  } else {
-    const newVelocity = Math.min(gameContext.player.velocity + scaledGravity, scaledTerminalVelocity);
-    gameContext.player.velocity = newVelocity;
-    gameContext.player.y = gameContext.player.y + newVelocity * frameScalePhysics;
-  }
+  // During Phase Mode, normal physics apply (player keeps manual control)
+  // Pipe collisions are already disabled via isInvincible check
+  const newVelocity = Math.min(gameContext.player.velocity + scaledGravity, scaledTerminalVelocity);
+  gameContext.player.velocity = newVelocity;
+  gameContext.player.y = gameContext.player.y + newVelocity * frameScalePhysics;
 
   // Trail_Effect: sample player position (disabled when reduced motion is enabled)
   if (!reducedMotionEnabled && gameContext.trail) {
@@ -3042,23 +3589,6 @@ function update(deltaMs) {
   // Update steering mode timer and depletion
   gameContext = updateSteeringMode(gameContext, deltaMs);
 
-  // Update slow-motion timer: decrement and deactivate when expired, start ramp-up
-  if (gameContext.slowMotionActive) {
-    gameContext.slowMotionTimer -= deltaMs;
-    if (gameContext.slowMotionTimer <= 0) {
-      gameContext.slowMotionTimer = 0;
-      gameContext.slowMotionActive = false;
-      gameContext.slowMotionRampTimer = SLOW_MOTION_RAMP_DURATION;
-    }
-  }
-
-  // Decrement slow-motion ramp timer (speed ramp-up phase after expiry)
-  if (gameContext.slowMotionRampTimer > 0) {
-    gameContext.slowMotionRampTimer -= deltaMs;
-    if (gameContext.slowMotionRampTimer < 0) {
-      gameContext.slowMotionRampTimer = 0;
-    }
-  }
 
   // Update magnet timer: decrement and deactivate when expired
   if (gameContext.magnetActive) {
@@ -3084,30 +3614,11 @@ function update(deltaMs) {
   gameContext.dayNightCycle = updateDayNightCycle(gameContext.dayNightCycle, deltaMs, gameContext.paused);
 
   // Update particles using pool (in-place mutation, release dead particles)
-  {
-    const dtSec = deltaMs / 1000;
-    const pool = gameContext.particlePool;
-    const activeParticles = gameContext.particles;
-    let writeIdx = 0;
-    for (let i = 0; i < activeParticles.length; i++) {
-      const p = activeParticles[i];
-      p.life -= deltaMs;
-      if (p.life <= 0) {
-        releaseParticle(pool, p);
-      } else {
-        p.x += p.vx * dtSec;
-        p.y += p.vy * dtSec;
-        p.alpha = Math.max(0, p.life / p.maxLife);
-        activeParticles[writeIdx] = p;
-        writeIdx++;
-      }
-    }
-    activeParticles.length = writeIdx;
-  }
+  updateParticlesPooled(gameContext.particlePool, deltaMs);
 
   // Move pipes in-place using current difficulty speed scaled (frame-rate independent)
   const frameScale = deltaMs / 16.67;
-  const currentSpeed = gameContext.currentDifficulty.pipeSpeed * s * speedMult * frameScale;
+  const currentSpeed = gameContext.currentDifficulty.pipeSpeed * s * frameScale;
   for (let i = 0; i < gameContext.pipes.length; i++) {
     gameContext.pipes[i].x -= currentSpeed;
   }
@@ -3149,13 +3660,6 @@ function update(deltaMs) {
       if (magnetPickup !== null) {
         magnetPickup.radius = MAGNET_RADIUS * s;
         gameContext.magnetPickups.push(magnetPickup);
-      }
-
-      // Spawn slow-motion pickup with 8% chance per new pipe
-      const slowMotionPickup = spawnSlowMotionPickup(pooledPipe);
-      if (slowMotionPickup !== null) {
-        slowMotionPickup.radius = SLOW_MOTION_RADIUS * s;
-        gameContext.slowMotionPickups.push(slowMotionPickup);
       }
     }
     // If pool exhausted (null), skip spawn gracefully
@@ -3219,19 +3723,6 @@ function update(deltaMs) {
     gameContext.magnetPickups.length = writeIdx;
   }
 
-  // Move slow-motion pickups in-place and remove off-screen ones
-  {
-    let writeIdx = 0;
-    for (let i = 0; i < gameContext.slowMotionPickups.length; i++) {
-      const pickup = gameContext.slowMotionPickups[i];
-      pickup.x -= currentSpeed;
-      if (pickup.x + pickup.radius > 0) {
-        gameContext.slowMotionPickups[writeIdx] = pickup;
-        writeIdx++;
-      }
-    }
-    gameContext.slowMotionPickups.length = writeIdx;
-  }
 
   // Collect data packets with scaled player hitbox
   const scaledSpriteW = SPRITE_WIDTH * s;
@@ -3250,6 +3741,11 @@ function update(deltaMs) {
     for (let i = 0; i < gameContext.magnetPickups.length; i++) {
       const pickup = gameContext.magnetPickups[i];
       if (checkMagnetPickupCollision(playerRect, pickup)) {
+        // Spawn particle burst on collection (magenta for Magnet)
+        if (!reducedMotionEnabled) {
+          const count = Math.floor(Math.random() * 5) + 8;
+          spawnParticlesPooled(gameContext.particlePool, pickup.x, pickup.y, count, { color: '#ff00ff', maxLife: 500 });
+        }
         // Activate or reset magnet timer
         gameContext = activateMagnet(gameContext);
       } else {
@@ -3279,62 +3775,33 @@ function update(deltaMs) {
     // Spawn particles at each collected packet's position using pool
     // Skip particle effects when reduced motion is enabled (accessibility)
     if (!reducedMotionEnabled) {
-      const themeParticleColor = getCurrentTheme(gameContext.themeSystem).particle;
       for (const packet of collected) {
-        const count = 8 + Math.floor(Math.random() * 5); // 8-12 particles
-        const color = themeParticleColor;
-        const minLife = PARTICLE_MIN_LIFE;
-        const maxLife = PARTICLE_MAX_LIFE;
-        const minRadius = PARTICLE_MIN_RADIUS;
-        const maxRadius = PARTICLE_MAX_RADIUS;
-        const speed = PARTICLE_SPEED;
-
-        for (let i = 0; i < count; i++) {
-          const p = acquireParticle(gameContext.particlePool);
-          if (p === null) break; // Pool exhausted, skip remaining
-          const angle = Math.random() * Math.PI * 2;
-          const spd = speed * (0.5 + Math.random() * 0.5);
-          const life = minLife + Math.random() * (maxLife - minLife);
-          p.x = packet.x;
-          p.y = packet.y;
-          p.vx = Math.cos(angle) * spd;
-          p.vy = Math.sin(angle) * spd;
-          p.radius = minRadius + Math.random() * (maxRadius - minRadius);
-          p.color = color;
-          p.alpha = 1.0;
-          p.life = life;
-          p.maxLife = life;
-          gameContext.particles.push(p);
-        }
+        const count = Math.floor(Math.random() * 5) + 8; // 8-12 particles
+        spawnParticlesPooled(gameContext.particlePool, packet.x, packet.y, count, { color: '#b366ff', maxLife: 500 });
       }
     }
   }
 
   // Show/hide activation button based on charge readiness
-  const btn = document.getElementById('steering-activate-btn');
+  const btn = domCache.steeringActivateBtn;
   if (btn) {
     if (canActivateSteering(gameContext.steeringCharge, gameContext.steeringModeActive)) {
-      btn.style.display = 'block';
+      if (!btn.classList.contains('btn-reveal')) {
+        btn.style.display = 'block';
+        btn.classList.add('btn-reveal');
+        // Force reflow then add .visible for transition
+        void btn.offsetHeight;
+        btn.classList.add('visible');
+      }
     } else {
-      btn.style.display = 'none';
+      if (btn.classList.contains('btn-reveal')) {
+        btn.classList.remove('visible');
+        btn.classList.remove('btn-reveal');
+        btn.style.display = 'none';
+      }
     }
   }
 
-  // Slow-motion pickup collision: suppress during Steering Mode
-  if (!gameContext.steeringModeActive) {
-    const slowPickups = gameContext.slowMotionPickups;
-    let writeIdx = 0;
-    for (let i = 0; i < slowPickups.length; i++) {
-      if (checkSlowMotionPickupCollision(playerRect, slowPickups[i])) {
-        // Activate or reset slow-motion timer (no compounding)
-        gameContext = activateSlowMotion(gameContext);
-      } else {
-        slowPickups[writeIdx] = slowPickups[i];
-        writeIdx++;
-      }
-    }
-    slowPickups.length = writeIdx;
-  }
 
   // Shield pickup collision: check if player collides with any shield pickup
   {
@@ -3342,6 +3809,11 @@ function update(deltaMs) {
     let writeIdx = 0;
     for (let i = 0; i < pickups.length; i++) {
       if (checkShieldPickupCollision(playerRect, pickups[i])) {
+        // Spawn particle burst on collection (blue for Shield)
+        if (!reducedMotionEnabled) {
+          const count = Math.floor(Math.random() * 5) + 8;
+          spawnParticlesPooled(gameContext.particlePool, pickups[i].x, pickups[i].y, count, { color: '#0088ff', maxLife: 500 });
+        }
         // Activate or reset shield timer
         gameContext = activateShield(gameContext);
       } else {
@@ -3368,7 +3840,17 @@ function update(deltaMs) {
       gameContext.score++;
       audioManager.playScorePing();
       createScorePopup(gameContext.player.x, gameContext.player.y);
-      updateAriaLabel(document.getElementById('game-canvas'), gameContext.state, gameContext.score);
+      updateAriaLabel(domCache.canvas, gameContext.state, gameContext.score);
+
+      // Score animation: pulse scale + text-shadow intensification
+      const scoreEl = domCache.scoreOverlay;
+      if (scoreEl) {
+        triggerScorePulse(scoreEl);
+        scoreEl.style.textShadow = '0 0 10px var(--accent-secondary), 0 0 20px rgba(0,229,255,0.8)';
+        setTimeout(() => {
+          scoreEl.style.textShadow = '0 0 10px var(--accent-secondary), 0 0 20px rgba(0,229,255,0.5)';
+        }, 300);
+      }
     }
   }
 
@@ -3376,7 +3858,7 @@ function update(deltaMs) {
   gameContext.themeSystem = updateThemeSystem(gameContext.themeSystem, gameContext.score, deltaMs);
 
   // Collision detection with scaled dimensions
-  const isInvincible = gameContext.steeringModeActive || isGracePeriodActive(gameContext.gracePeriod);
+  const isInvincible = gameContext.steeringModeActive || isGracePeriodActive(gameContext.gracePeriod) || gameContext.shieldActive;
   const scaledCapOverhang = CAP_OVERHANG * s;
   const scaledCapHeight = CAP_HEIGHT * s;
 
@@ -3410,17 +3892,43 @@ function update(deltaMs) {
     }
   }
 
-  // Shield absorbs pipe collision: suppress the first pipe hit if shield is active
-  if (pipeCollision) {
-    if (absorbCollision(gameContext)) {
-      pipeCollision = false; // Shield absorbed the collision
-    } else {
-      collision = true; // No shield, collision triggers game over
+  // Shield: consume shield when overlapping a pipe while invincible due to shield
+  if (gameContext.shieldActive && !gameContext.steeringModeActive && !isGracePeriodActive(gameContext.gracePeriod)) {
+    // Check if currently overlapping any pipe
+    let overlappingPipe = false;
+    for (const pipe of gameContext.pipes) {
+      const topPipeRect = { x: pipe.x, y: 0, width: pipe.width, height: pipe.gapTop };
+      const bottomPipeRect = { x: pipe.x, y: pipe.gapBottom, width: pipe.width, height: canvasH - pipe.gapBottom };
+      const topCapRect = { x: pipe.x - scaledCapOverhang, y: pipe.gapTop - scaledCapHeight, width: pipe.width + scaledCapOverhang * 2, height: scaledCapHeight };
+      const bottomCapRect = { x: pipe.x - scaledCapOverhang, y: pipe.gapBottom, width: pipe.width + scaledCapOverhang * 2, height: scaledCapHeight };
+      if (rectsOverlap(playerRect, topPipeRect) || rectsOverlap(playerRect, bottomPipeRect) ||
+          rectsOverlap(playerRect, topCapRect) || rectsOverlap(playerRect, bottomCapRect)) {
+        overlappingPipe = true;
+        break;
+      }
+    }
+    // If overlapping a pipe, mark shield as absorbing (it will deactivate once player clears the pipe)
+    if (overlappingPipe) {
+      gameContext.shieldAbsorbing = true;
+    } else if (gameContext.shieldAbsorbing) {
+      // Player has cleared the pipe — deactivate shield
+      gameContext.shieldActive = false;
+      gameContext.shieldTimer = 0;
+      gameContext.shieldAbsorbing = false;
     }
   }
+
+  // Legacy shield absorption fallback (should not be needed with new logic)
+  if (pipeCollision) {
+    collision = true;
+  }
   if (collision) {
+    // Auto-close help overlay before state transition
+    closeHelpOverlayIfOpen();
     gameContext.state = transitionState(gameContext.state, 'COLLISION');
-    updateAriaLabel(document.getElementById('game-canvas'), gameContext.state, gameContext.score);
+    updateScoreOverlayVisibility(gameContext.state);
+    updateHelpButtonVisibility(gameContext.state);
+    updateAriaLabel(domCache.canvas, gameContext.state, gameContext.score);
     // Clear trail buffer on state transition away from PLAYING
     if (gameContext.trail) {
       clearTrailBuffer(gameContext.trail);
@@ -3432,6 +3940,7 @@ function update(deltaMs) {
     audioManager.playCrash();
     audioManager.stopBackgroundHum();
     if (chiptuneEngine) chiptuneEngine.stopMusic();
+    if (musicEngine.ctx) stopMusic(musicEngine);
     const previousHighScore = gameContext.highScore;
     gameContext.highScore = saveHighScore(gameContext.score, gameContext.highScore);
     const isNewHighScore = gameContext.score > 0 && gameContext.score > previousHighScore;
@@ -3439,297 +3948,18 @@ function update(deltaMs) {
 
     // Death_Animation: skip when reduced motion is enabled (accessibility)
     if (!reducedMotionEnabled) {
-      gameContext.deathAnimation = initDeathAnimation(gameContext.player, gameContext.player.velocity);
+      // Activate red tint flash before spin-and-fall
+      gameContext.deathRedTint = { active: true, timer: DEATH_RED_TINT_DURATION };
+      // Death animation will be initiated after tint completes (handled in update loop)
+      gameContext.deathAnimation = null;
       // Death recap fade-in is deferred until animation completes (handled in update loop)
     } else {
       // No animation — immediately fade in the death recap overlay
-      const deathRecapOverlay = document.getElementById('death-recap-overlay');
+      gameContext.deathRedTint = { active: false, timer: 0 };
+      const deathRecapOverlay = domCache.deathRecapOverlay;
       fadeIn(deathRecapOverlay, DEATH_RECAP_FADE_IN);
     }
 
-    // Leaderboard: submit score or prompt for display name
-    handleLeaderboardOnGameOver();
-  }
-}
-
-// === Online Leaderboard System ===
-
-const LEADERBOARD_TIMEOUT = 5000;        // ms before aborting leaderboard requests
-const MAX_LEADERBOARD_ENTRIES = 10;
-const DISPLAY_NAME_KEY = 'flappyKiroDisplayName';
-
-/**
- * Validates a display name. Returns true if the name is 3-15 characters
- * and contains only alphanumeric characters (a-z, A-Z, 0-9).
- */
-function isValidDisplayName(name) {
-  return /^[a-zA-Z0-9]{3,15}$/.test(name);
-}
-
-/**
- * Retrieves the stored display name from localStorage.
- * Returns null if localStorage is unavailable or no name is stored.
- */
-function getStoredDisplayName() {
-  try {
-    return localStorage.getItem(DISPLAY_NAME_KEY);
-  } catch (e) {
-    return null;
-  }
-}
-
-/**
- * Saves the display name to localStorage.
- * Returns true on success, false if localStorage is unavailable or full.
- */
-function saveDisplayName(name) {
-  try {
-    localStorage.setItem(DISPLAY_NAME_KEY, name);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * Initializes the leaderboard service with the given configuration.
- * Returns a leaderboard service object that holds the config reference.
- * The service is a placeholder that will work when a real Firebase config is added.
- */
-function initLeaderboard(config) {
-  return {
-    config: config,
-    initialized: true
-  };
-}
-
-/**
- * Submits a score to the leaderboard backend.
- * Uses AbortController with LEADERBOARD_TIMEOUT for request cancellation.
- * Placeholder implementation: logs the submission and resolves.
- * When a real backend is configured, this will POST to the leaderboard service.
- */
-async function submitScore(service, displayName, score) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LEADERBOARD_TIMEOUT);
-
-  try {
-    // Placeholder: In production, this would POST to Firebase or equivalent
-    console.log(`[Leaderboard] Submitting score: ${displayName} - ${score}`);
-    clearTimeout(timeoutId);
-    return { success: true };
-  } catch (e) {
-    clearTimeout(timeoutId);
-    if (e.name === 'AbortError') {
-      console.warn('[Leaderboard] Score submission timed out');
-    }
-    return { success: false, error: e.message || 'Unknown error' };
-  }
-}
-
-/**
- * Fetches the top scores from the leaderboard backend.
- * Uses AbortController with LEADERBOARD_TIMEOUT for request cancellation.
- * Placeholder implementation: returns an empty array.
- * When a real backend is configured, this will GET from the leaderboard service.
- */
-async function fetchTopScores(service, limit) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LEADERBOARD_TIMEOUT);
-
-  try {
-    // Placeholder: In production, this would GET from Firebase or equivalent
-    clearTimeout(timeoutId);
-    return [];
-  } catch (e) {
-    clearTimeout(timeoutId);
-    if (e.name === 'AbortError') {
-      console.warn('[Leaderboard] Fetch top scores timed out');
-    }
-    return [];
-  }
-}
-
-// === Leaderboard UI ===
-
-/**
- * Renders the leaderboard list into the DOM container.
- * Shows rank (1-based), player name (truncated to 15 chars), and score value.
- * Creates DOM rows for up to MAX_LEADERBOARD_ENTRIES scores.
- */
-function renderLeaderboardList(scores) {
-  const listEl = document.getElementById('leaderboard-list');
-  if (!listEl) return;
-  listEl.innerHTML = '';
-
-  if (scores.length === 0) {
-    listEl.innerHTML = '<p style="text-align:center;font-size:13px;color:#888;">No scores yet</p>';
-    return;
-  }
-
-  const entries = scores.slice(0, MAX_LEADERBOARD_ENTRIES);
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    const name = entry.name && entry.name.length > 15
-      ? entry.name.substring(0, 15)
-      : (entry.name || 'Unknown');
-
-    const row = document.createElement('div');
-    row.className = 'leaderboard-row';
-
-    const rankSpan = document.createElement('span');
-    rankSpan.className = 'leaderboard-rank';
-    rankSpan.textContent = `${i + 1}.`;
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'leaderboard-name';
-    nameSpan.textContent = name;
-
-    const scoreSpan = document.createElement('span');
-    scoreSpan.className = 'leaderboard-score';
-    scoreSpan.textContent = entry.score;
-
-    row.appendChild(rankSpan);
-    row.appendChild(nameSpan);
-    row.appendChild(scoreSpan);
-    listEl.appendChild(row);
-  }
-}
-
-/**
- * Shows the leaderboard overlay. Fetches top scores and renders them.
- * If no stored display name, shows the name prompt input.
- * Displays error message if service is unavailable without blocking gameplay.
- */
-async function showLeaderboard() {
-  const overlay = document.getElementById('leaderboard-overlay');
-  const errorEl = document.getElementById('leaderboard-error');
-  const namePromptEl = document.getElementById('leaderboard-name-prompt');
-  const listEl = document.getElementById('leaderboard-list');
-
-  if (!overlay) return;
-
-  // Reset state
-  if (errorEl) {
-    errorEl.style.display = 'none';
-    errorEl.textContent = '';
-  }
-  if (listEl) listEl.innerHTML = '';
-
-  // Show name prompt if no stored display name
-  const storedName = getStoredDisplayName();
-  if (namePromptEl) {
-    namePromptEl.style.display = storedName ? 'none' : 'flex';
-  }
-
-  // Show the overlay
-  overlay.style.display = 'flex';
-
-  // Fetch scores with timeout
-  try {
-    const scores = await fetchTopScores(gameContext.leaderboard, MAX_LEADERBOARD_ENTRIES);
-    renderLeaderboardList(scores);
-  } catch (e) {
-    if (errorEl) {
-      errorEl.textContent = 'Leaderboard unavailable. Please try again later.';
-      errorEl.style.display = 'block';
-    }
-  }
-}
-
-/**
- * Hides the leaderboard overlay.
- */
-function hideLeaderboard() {
-  const overlay = document.getElementById('leaderboard-overlay');
-  if (overlay) {
-    overlay.style.display = 'none';
-  }
-}
-
-/**
- * Handles the display name submission from the leaderboard name prompt.
- * Validates the name (3-15 alphanumeric), saves it, and submits the pending score.
- */
-function handleLeaderboardNameSubmit() {
-  const inputEl = document.getElementById('leaderboard-name-input');
-  const errorEl = document.getElementById('leaderboard-error');
-  const namePromptEl = document.getElementById('leaderboard-name-prompt');
-
-  if (!inputEl) return;
-
-  const name = inputEl.value.trim();
-
-  if (!isValidDisplayName(name)) {
-    if (errorEl) {
-      errorEl.textContent = 'Name must be 3-15 alphanumeric characters.';
-      errorEl.style.display = 'block';
-    }
-    return;
-  }
-
-  // Clear error
-  if (errorEl) {
-    errorEl.style.display = 'none';
-    errorEl.textContent = '';
-  }
-
-  // Save the name
-  saveDisplayName(name);
-
-  // Hide the name prompt
-  if (namePromptEl) {
-    namePromptEl.style.display = 'none';
-  }
-
-  // Submit the score with the new name
-  submitScore(gameContext.leaderboard, name, gameContext.score);
-
-  // Clear input
-  inputEl.value = '';
-}
-
-/**
- * Wires up the leaderboard UI event listeners (close button, name submit).
- * Called once during game initialization.
- */
-function setupLeaderboardUI() {
-  const closeBtn = document.getElementById('leaderboard-close');
-  const submitBtn = document.getElementById('leaderboard-name-submit');
-  const nameInput = document.getElementById('leaderboard-name-input');
-
-  if (closeBtn) {
-    closeBtn.addEventListener('click', hideLeaderboard);
-  }
-
-  if (submitBtn) {
-    submitBtn.addEventListener('click', handleLeaderboardNameSubmit);
-  }
-
-  // Allow Enter key to submit the name
-  if (nameInput) {
-    nameInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        handleLeaderboardNameSubmit();
-      }
-    });
-  }
-}
-
-/**
- * Handles leaderboard logic after game over.
- * If display name is stored, submits the score and shows the leaderboard.
- * If not stored, shows the leaderboard overlay with name prompt.
- */
-function handleLeaderboardOnGameOver() {
-  const storedName = getStoredDisplayName();
-  if (storedName) {
-    // Submit score with stored name
-    submitScore(gameContext.leaderboard, storedName, gameContext.score);
-    showLeaderboard();
-  } else {
-    // Show leaderboard with name prompt
-    showLeaderboard();
   }
 }
 
@@ -3759,6 +3989,26 @@ function gameLoop(timestamp) {
  */
 function initGame() {
   const canvas = document.getElementById('game-canvas');
+
+  // Initialize DOM cache — all element references queried once and reused
+  domCache = {
+    canvas: canvas,
+    scorePopupContainer: document.getElementById('score-popup-container'),
+    startOverlay: document.getElementById('start-overlay'),
+    pauseOverlay: document.getElementById('pause-overlay'),
+    deathRecapOverlay: document.getElementById('death-recap-overlay'),
+    deathRecapScore: document.getElementById('death-recap-score'),
+    deathRecapHighscore: document.getElementById('death-recap-highscore'),
+    deathRecapNewHigh: document.getElementById('death-recap-new-high'),
+    deathRecapCountdown: document.getElementById('death-recap-countdown'),
+    deathRecapRestart: document.getElementById('death-recap-restart'),
+    steeringChargeBar: document.getElementById('steering-charge-bar'),
+    steeringChargeContainer: document.getElementById('steering-charge-container'),
+    steeringActivateBtn: document.getElementById('steering-activate-btn'),
+    scoreOverlay: document.getElementById('score-overlay'),
+    helpBtn: document.getElementById('help-btn'),
+    helpOverlay: document.getElementById('help-overlay')
+  };
 
   // Calculate responsive canvas dimensions and apply
   const dims = calculateCanvasDimensions(window.innerWidth, window.innerHeight);
@@ -3793,6 +4043,14 @@ function initGame() {
       if (musicAudioCtx && musicAudioCtx.state === 'suspended') {
         musicAudioCtx.resume();
       }
+      // Initialize the ambient music engine AudioContext on first user gesture
+      if (!musicEngine.ctx) {
+        try {
+          initMusicContext(musicEngine);
+        } catch (e) {
+          // AudioContext init failed — ambient music disabled silently
+        }
+      }
       document.removeEventListener('click', resumeAudioContext);
       document.removeEventListener('keydown', resumeAudioContext);
       document.removeEventListener('touchstart', resumeAudioContext);
@@ -3803,6 +4061,25 @@ function initGame() {
   } catch (e) {
     // AudioContext unavailable — game continues without music
     chiptuneEngine = null;
+  }
+
+  // Fallback: if chiptune engine failed, still set up user gesture listener for ambient music
+  if (!chiptuneEngine && !musicEngine.ctx) {
+    const initMusicOnGesture = () => {
+      if (!musicEngine.ctx) {
+        try {
+          initMusicContext(musicEngine);
+        } catch (e) {
+          // AudioContext init failed — ambient music disabled silently
+        }
+      }
+      document.removeEventListener('click', initMusicOnGesture);
+      document.removeEventListener('keydown', initMusicOnGesture);
+      document.removeEventListener('touchstart', initMusicOnGesture);
+    };
+    document.addEventListener('click', initMusicOnGesture);
+    document.addEventListener('keydown', initMusicOnGesture);
+    document.addEventListener('touchstart', initMusicOnGesture);
   }
 
   // Initialize matrix grid for steering mode background
@@ -3821,6 +4098,7 @@ function initGame() {
     shieldPickups: [],
     shieldActive: false,
     shieldTimer: 0,
+    shieldAbsorbing: false,
     magnetPickups: [],
     score: 0,
     highScore: highScore,
@@ -3831,15 +4109,10 @@ function initGame() {
     paused: false,
     gracePeriod: { active: false, timer: 0 },
     screenShake: { active: false, timer: 0, offsetX: 0, offsetY: 0 },
-    particles: [],
     parallaxLayers: initParallaxLayers(dims.width, dims.height),
     deathRecap: { active: false, countdown: 0, inputEnabled: true },
     transitionLock: false,
     currentDifficulty: { pipeSpeed: PIPE_SPEED, pipeGap: PIPE_GAP },
-    slowMotionPickups: [],
-    slowMotionActive: false,
-    slowMotionTimer: 0,
-    slowMotionRampTimer: 0,
     magnetActive: false,
     magnetTimer: 0,
     pipeColor: '#00d400',
@@ -3851,8 +4124,10 @@ function initGame() {
     dayNightCycle: initDayNightCycle(),
     trail: initTrailBuffer(),
     themeSystem: initThemeSystem(),
-    leaderboard: initLeaderboard({}),
-    deathAnimation: null
+    deathAnimation: null,
+    deathRedTint: { active: false, timer: 0 },
+    helpOverlayVisible: false,
+    helpOverlayPreviousState: null
   };
 
   // Update charge bar to initial state
@@ -3862,8 +4137,8 @@ function initGame() {
   setupInputHandlers(canvas, onInput, onActivateSteering);
   setupTouchHandlers(canvas, onInput);
 
-  // Setup leaderboard UI event listeners
-  setupLeaderboardUI();
+  // Set initial help button visibility (visible on START_SCREEN)
+  updateHelpButtonVisibility(gameContext.state);
 
   // Setup responsive resize handler to update scale factor and canvas dimensions
   setupResizeHandler(canvas, (newWidth, newHeight) => {
