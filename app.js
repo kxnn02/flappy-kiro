@@ -3623,10 +3623,11 @@ function update(deltaMs) {
     gameContext.pipes[i].x -= currentSpeed;
   }
 
-  // Spawn new pipes based on frame count (acquire from pool)
-  gameContext.frameCount++;
-  if (gameContext.frameCount >= PIPE_INTERVAL) {
-    gameContext.frameCount = 0;
+  // Spawn new pipes based on elapsed time (frame-rate independent)
+  gameContext.frameCount += deltaMs;
+  const spawnIntervalMs = PIPE_INTERVAL * 16.67; // 90 frames at 60fps = ~1500ms
+  if (gameContext.frameCount >= spawnIntervalMs) {
+    gameContext.frameCount -= spawnIntervalMs;
     const pooledPipe = acquirePipe(gameContext.pipePool);
     if (pooledPipe !== null) {
       // Configure the acquired pipe with scaled gap properties
