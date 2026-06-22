@@ -1,70 +1,117 @@
 # Flappy Kiro
 
-A Flappy Bird-style browser game featuring Ghosty, a neon-purple spirit navigating through pipes in a dark retro world. Collect Data Packets to charge Steering Mode, grab power-ups like Shield and Magnet, and chase your high score. Built with vanilla JavaScript, HTML5 Canvas, and Web Audio API.
+> A retro-neon Flappy Bird game built with vanilla JavaScript, HTML5 Canvas, and Web Audio API.
+
+<p align="center">
+  <img src="assets/screenshot.png" alt="Flappy Kiro Gameplay" width="400" />
+</p>
+
+## Play Now
+
+**[https://kxnn02.github.io/flappy-kiro/](https://kxnn02.github.io/flappy-kiro/)**
+
+---
+
+## About
+
+Flappy Kiro features Ghosty, a neon-purple spirit navigating through pipes in a dark retro world. Collect Data Packets to charge Steering Mode, grab power-ups, and chase your high score. Everything runs in the browser with zero dependencies.
+
+---
 
 ## Controls
 
 | Input | Action |
 |-------|--------|
-| Spacebar / Click / Touch | Flap (jump upward) |
+| Space / Click / Touch | Flap |
 | Escape | Pause / Resume |
-| Shift | Activate Steering Mode (when fully charged) |
+| Shift | Activate Steering Mode |
+
+---
 
 ## Features
 
-- **Steering Mode** — Collect Data Packets to charge autopilot with invincibility
-- **Power-ups** — Shield (absorbs one hit), Slow-Motion (half speed for 4s), Magnet (attracts Data Packets)
-- **Day/Night Cycle** — Smooth 60-second sinusoidal transition between night and day backgrounds
-- **Themed Worlds** — 4 color themes that cycle every 50 points with fade transitions
-- **Trail Effect** — Purple trailing circles behind Ghosty during flight
-- **Pipe Color Gradient** — Pipes shift from green to red as speed increases
-- **Ambient Lo-Fi Music** — Procedurally generated warm chord pads using Web Audio oscillators
-- **Chiptune Music** — Pentatonic melody layer with bass line
-- **Death Animation** — Ghosty spins and falls with gravity before the recap screen
-- **Online Leaderboard** — Submit scores and view top 10 via Firebase
-- **Object Pooling** — Pre-allocated particle and pipe pools for zero-allocation gameplay
-- **Responsive Canvas** — Scales to fit any viewport while maintaining 2:3 aspect ratio
-- **Accessibility** — ARIA labels, reduced motion support, keyboard-focusable controls
-- **PWA Support** — Installable as a standalone app with offline caching
+**Gameplay**
+- Steering Mode — Collect Data Packets to charge autopilot with invincibility
+- Power-ups — Shield (absorbs one hit), Magnet (attracts Data Packets)
+- Difficulty scaling — Pipe speed increases and gap shrinks as you score
 
-## How to Run Locally
+**Visuals**
+- Refined dark-neon color palette with CSS custom properties
+- Multi-layer glow effects on buttons, headings, and canvas entities
+- Smooth overlay transitions with fade and slide animations
+- Scrolling grid background with vertical gradient
+- Day/Night cycle and themed worlds that change every 50 points
+- Trail effect and death spin animation
+- Score pulse animation on increment
 
-The game is a static single-page app with no build step required.
+**Audio**
+- Ambient lo-fi music engine — Procedural warm chord pads via Web Audio API
+- Chiptune melody layer with pentatonic bass line
+- Procedural sound effects (flap, score, crash, steering whoosh)
 
-**Option 1 — Open directly:**
+**Technical**
+- Single-file architecture (index.html, style.css, app.js)
+- Object pooling for particles and pipes (zero-allocation gameplay)
+- Responsive canvas scaling (2:3 aspect ratio, any viewport)
+- Frame-rate independent physics and pipe spawning
+- PWA support with offline caching
+
+**Accessibility**
+- Reduced motion support (disables all animations and transitions)
+- ARIA labels on canvas for screen readers
+- Keyboard-focusable controls with visible focus indicators
+
+---
+
+## Getting Started
+
+The game is a static single-page app — no build step needed.
 
 ```bash
-# Just open index.html in your browser
+# Option 1: Open directly
 open index.html
+
+# Option 2: Local server (recommended)
+npx serve .
+# Then visit http://localhost:3000
 ```
 
-**Option 2 — Local server (recommended for full PWA features):**
+---
+
+## Running Tests
+
+Property-based tests validate core game logic:
 
 ```bash
-npx serve .
+npm install
+npm test
 ```
 
-Then navigate to `http://localhost:3000` in your browser.
-
-## Deployment
-
-The game is deployed to GitHub Pages via GitHub Actions. Every push to `main` triggers an automatic deployment.
-
-**Live URL:** [https://kxnn02.github.io/flappy-kiro/]
+---
 
 ## Project Structure
 
 ```
 ├── index.html          # Game page with canvas and UI overlays
-├── style.css           # Styling, palette, transitions, and glow effects
+├── style.css           # Palette, transitions, glows, and layout
 ├── app.js              # All game logic (single-file architecture)
-├── assets/             # Sprites and audio files
+├── assets/
 │   ├── ghosty.png      # Ghosty sprite
+│   ├── screenshot.png  # Gameplay screenshot
 │   ├── jump.wav        # Flap sound effect
 │   └── game_over.wav   # Death sound effect
 ├── tests/              # Property-based tests (vitest + fast-check)
-└── .kiro/specs/        # Feature specs and task plans
+├── manifest.json       # PWA manifest
+└── service-worker.js   # Offline caching
 ```
+
+---
+
+## Deployment
+
+Deployed to GitHub Pages via GitHub Actions. Every push to `main` triggers automatic deployment.
+
+---
 
 ## License
 
